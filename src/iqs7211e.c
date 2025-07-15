@@ -117,6 +117,7 @@ static bool iqs7211e_init_state(struct iqs7211e_data *data)
     default:
         break;
     }
+    LOG_DBG("Transition to state: %d", data->init_state);
     return false;
 }
 
@@ -155,6 +156,7 @@ static bool iqs7211e_check_reset(struct iqs7211e_data *data)
     {
         return false;
     }
+    LOG_DBG("Info Flags: %02X %02X", info_flags[0], info_flags[1]);
     return (info_flags[0] & (1 << IQS7211E_SHOW_RESET_BIT)) != 0;
 }
 
@@ -721,13 +723,13 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
     data->finger_1_prev_dx = dx;
     data->finger_1_prev_dy = dy;
 
-    smooth_dx = smooth_dx / 500;
-    smooth_dy = smooth_dy / 500;
+    smooth_dx = smooth_dx >> 9; // dx/512
+    smooth_dy = smooth_dy >> 9;
     // clipping
-    int8_t report_dx = (smooth_dx > 127.0f) ? 127 : (smooth_dx < -127.0f) ? -127
-                                                                          : (int8_t)smooth_dx;
-    int8_t report_dy = (smooth_dy > 127.0f) ? 127 : (smooth_dy < -127.0f) ? -127
-                                                                          : (int8_t)smooth_dy;
+    int8_t report_dx = (smooth_dx > 127) ? 127 : (smooth_dx < -127) ? -127
+                                                                    : (int8_t)smooth_dx;
+    int8_t report_dy = (smooth_dy > 127) ? 127 : (smooth_dy < -127) ? -127
+                                                                    : (int8_t)smooth_dy;
 
     input_report_rel(data->dev, INPUT_REL_X, report_dx, false, K_NO_WAIT);
     input_report_rel(data->dev, INPUT_REL_Y, report_dy, true, K_NO_WAIT); // sync=true
