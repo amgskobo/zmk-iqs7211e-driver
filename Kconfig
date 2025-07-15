@@ -1,0 +1,13 @@
+# 2025 amgskobo
+
+config ZMK_IQS7211E
+  bool "IQS7211E Trackpad"
+  select ZMK_POINTING
+  select I2C
+  select GPIO
+  help
+    Enable driver for IQS7211E.
+
+if ZMK_IQS7211E
+
+endif # ZMK_IQS7211E
