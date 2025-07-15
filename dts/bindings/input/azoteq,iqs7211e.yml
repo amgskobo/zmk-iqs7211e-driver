@@ -1,0 +1,14 @@
+description: Azoteq IQS7211E trackpad zmk driver
+
+compatible: "azoteq,iqs7211e"
+
+include: i2c-device.yaml
+
+properties:
+  reg:
+    required: true
+    description: I2C address of the device
+  irq-gpios:
+    type: phandle-array
+    required: true
+    description: Interrupt pin
