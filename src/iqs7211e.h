@@ -77,9 +77,6 @@ struct iqs7211e_data
     struct k_work work;
     enum iqs7211e_init_state init_state;
     bool reset_called;
-    struct k_timer iqs7211e_power_check_timer;
-    bool suspended;
-    uint32_t lp2_enter_ms;
     uint8_t gestures[2];
     uint8_t info_flags[2];
     uint16_t finger_1_x;

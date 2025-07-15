@@ -27,16 +27,12 @@ static void iqs7211e_gpio_callback(const struct device *port, struct gpio_callba
 static int iqs7211e_write_defaults(struct iqs7211e_data *data);
 static int iqs7211e_sw_reset(struct iqs7211e_data *data);
 static int iqs7211e_run_ati(struct iqs7211e_data *data);
-static uint8_t iqs7211e_get_bit(uint8_t byte, uint8_t pos);
-static int16_t calc_delta(uint16_t current, uint16_t prev);
-static void check_lp2_power_mode_and_suspend(struct iqs7211e_data *data);
-static int iqs7211e_set_event_mode(struct iqs7211e_data *data);
-static int iqs7211e_set_comm_req_en(struct iqs7211e_data *data);
-static enum iqs7211e_power_mode iqs7211e_get_power_mode(const struct iqs7211e_data *data);
-static int iqs7211e_suspend(struct iqs7211e_data *data);
-static int iqs7211e_force_comms(const struct i2c_dt_spec *i2c);
-static int iqs7211e_resume(struct iqs7211e_data *data);
 static void iqs7211e_queue_value_updates(struct iqs7211e_data *data);
+static int iqs7211e_set_event_mode(struct iqs7211e_data *data);
+static enum iqs7211e_power_mode iqs7211e_get_power_mode(const struct iqs7211e_data *data);
+static uint8_t iqs7211e_get_bit(uint8_t byte, uint8_t pos);
+static uint8_t iqs7211e_get_num_fingers(const struct iqs7211e_data *data);
+static int16_t calc_delta(uint16_t current, uint16_t prev);
 int iqs7211e_init(const struct device *dev);
 
 static bool iqs7211e_init_state(struct iqs7211e_data *data)
@@ -251,33 +247,6 @@ static bool iqs7211e_read_ati_active(struct iqs7211e_data *data)
     return !(info_flags[0] & (1 << IQS7211E_RE_ATI_OCCURRED_BIT));
 }
 
-static void iqs7211e_power_check(struct k_timer *timer)
-{
-    struct iqs7211e_data *data = k_timer_user_data_get(timer);
-    enum iqs7211e_power_mode mode = iqs7211e_get_power_mode(data);
-
-    switch (mode)
-    {
-    case IQS7211E_IDLE:
-        LOG_INF("💤 Power mode: IDLE");
-        break;
-    case IQS7211E_IDLE_TOUCH:
-        LOG_INF("🟡 Power mode: IDLE_TOUCH");
-        break;
-    case IQS7211E_ACTIVE:
-        LOG_INF("🟢 Power mode: ACTIVE");
-        break;
-    case IQS7211E_LP1:
-        LOG_INF("🟢 Power mode: LP1");
-    case IQS7211E_LP2:
-        LOG_INF("🟢 Power mode: LP2");
-
-    default:
-        LOG_INF("❓ Power mode: UNKNOWN");
-        break;
-    }
-}
-
 static void iqs7211e_queue_value_updates(struct iqs7211e_data *data)
 {
     const struct iqs7211e_config *config = data->dev->config;
@@ -341,32 +310,6 @@ static int iqs7211e_set_event_mode(struct iqs7211e_data *data)
     return 0;
 }
 
-static int iqs7211e_set_comm_req_en(struct iqs7211e_data *data)
-{
-    const struct iqs7211e_config *config = data->dev->config;
-    uint8_t command[2];
-    int ret;
-
-    ret = iqs7211e_read_bytes(&config->i2c, IQS7211E_MM_CONFIG_SETTINGS, command, sizeof(command));
-    if (ret)
-    {
-        LOG_ERR("Failed to read system control register");
-        return ret;
-    }
-
-    command[0] |= (1 << IQS7211E_COMM_REQ_BIT);
-
-    ret = iqs7211e_write_bytes(&config->i2c, IQS7211E_MM_CONFIG_SETTINGS, command, sizeof(command));
-    if (ret)
-    {
-        LOG_ERR("Failed to write system control register");
-        return ret;
-    }
-
-    LOG_INF("Comms Request EN enabled");
-    return 0;
-}
-
 static enum iqs7211e_power_mode iqs7211e_get_power_mode(const struct iqs7211e_data *data)
 {
     uint8_t info_flags[2];
@@ -409,75 +352,6 @@ static enum iqs7211e_power_mode iqs7211e_get_power_mode(const struct iqs7211e_da
 static uint8_t iqs7211e_get_bit(uint8_t byte, uint8_t pos)
 {
     return (byte >> pos) & 0x01;
-}
-
-static int iqs7211e_suspend(struct iqs7211e_data *data)
-{
-    const struct iqs7211e_config *config = data->dev->config;
-    uint8_t command[2];
-    int ret;
-
-    ret = iqs7211e_read_bytes(&config->i2c, IQS7211E_SYSTEM_CONTROL_REG, command, 2);
-    if (ret)
-    {
-        LOG_ERR("Failed to read system control register for suspend");
-        return ret;
-    }
-
-    command[1] |= (1 << IQS7211E_SUSPEND_BIT);
-
-    ret = iqs7211e_write_bytes(&config->i2c, IQS7211E_SYSTEM_CONTROL_REG, command, 2);
-    if (ret)
-    {
-        LOG_ERR("Failed to write system control register for suspend");
-        return ret;
-    }
-
-    LOG_INF("IQS7211E suspend mode requested");
-    return 0;
-}
-
-static int iqs7211e_force_comms(const struct i2c_dt_spec *i2c)
-{
-    int ret;
-    uint8_t req_data[2] = {0xFF, 0x00};
-
-    ret = i2c_write_dt(i2c, req_data, sizeof(req_data));
-    if (ret)
-    {
-        LOG_ERR("Force communication request failed: %d", ret);
-        return ret;
-    }
-
-    LOG_DBG("Force communication sent to I2C address 0x%02X", i2c->addr);
-    return 0;
-}
-
-static int iqs7211e_resume(struct iqs7211e_data *data)
-{
-    const struct iqs7211e_config *config = data->dev->config;
-
-    uint8_t command[2];
-    int ret;
-
-    ret = iqs7211e_read_bytes(&config->i2c, IQS7211E_SYSTEM_CONTROL_REG, command, 2);
-    if (ret)
-    {
-        LOG_ERR("Failed to read system control register for resume");
-        return ret;
-    }
-
-    command[1] &= ~(1 << IQS7211E_SUSPEND_BIT);
-
-    ret = iqs7211e_write_bytes(&config->i2c, IQS7211E_SYSTEM_CONTROL_REG, command, 2);
-    if (ret)
-    {
-        LOG_ERR("Failed to write system control register for resume");
-        return ret;
-    }
-
-    LOG_INF("IQS7211E resumed from suspend");
-    return 0;
 }
 
 static uint8_t iqs7211e_get_num_fingers(const struct iqs7211e_data *data)
@@ -812,7 +686,6 @@ static void iqs7211e_work_handler(struct k_work *work)
     if (iqs7211e_init_state(data))
     {
         iqs7211e_report_data(data);
-        // check_lp2_power_mode_and_suspend(data);
     }
     set_interrupt(data->dev, true);
 }
@@ -870,44 +743,6 @@ static int16_t calc_delta(uint16_t current, uint16_t prev)
     return (int16_t)delta;
 }
 
-static void check_lp2_power_mode_and_suspend(struct iqs7211e_data *data)
-{
-    uint32_t now = k_uptime_get_32();
-    enum iqs7211e_power_mode mode = iqs7211e_get_power_mode(data);
-    LOG_INF("POWER_MODE: %d", mode);
-
-    if (mode == IQS7211E_LP2)
-    {
-        if (!data->suspended)
-        {
-            if (data->lp2_enter_ms == 0)
-            {
-                data->lp2_enter_ms = now;
-                LOG_INF("Entered LP2 mode, suspend timer started");
-            }
-
-            if ((now - data->lp2_enter_ms) >= IQS7211E_SUSPEND_TIMEOUT_MS)
-            {
-                int ret = iqs7211e_suspend(data);
-                if (ret == 0)
-                {
-                    data->suspended = true;
-                    data->lp2_enter_ms = 0;
-                    LOG_INF("Device suspended after timer passed LP2 mode");
-                }
-                else
-                {
-                    LOG_ERR("Failed to suspend device");
-                }
-            }
-        }
-    }
-    if (mode == IQS7211E_ACTIVE)
-    {
-        data->lp2_enter_ms = 0;
-    }
-}
-
 static void set_interrupt(const struct device *dev, const bool en)
 {
     const struct iqs7211e_config *config = dev->config;
@@ -963,10 +798,6 @@ int iqs7211e_init(const struct device *dev)
 
     k_work_init(&data->work, iqs7211e_work_handler);
     set_interrupt(data->dev, true);
-
-    k_timer_init(&data->iqs7211e_power_check_timer, iqs7211e_power_check, NULL);
-    k_timer_user_data_set(&data->iqs7211e_power_check_timer, (void *)data);
-    k_timer_start(&data->iqs7211e_power_check_timer, K_SECONDS(2), K_SECONDS(2));
 
     LOG_INF("IQS7211E driver initialized successfully");
     return 0;
