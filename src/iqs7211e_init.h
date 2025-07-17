@@ -76,11 +76,11 @@
 /* Thresholds and Debounce Settings */
 /* Memory Map Position 0x38 - 0x3A */
 #define TRACKPAD_TOUCH_SET_THRESHOLD             0x40
-#define TRACKPAD_TOUCH_CLEAR_THRESHOLD           0x18
+#define TRACKPAD_TOUCH_CLEAR_THRESHOLD           0x20
 #define ALP_THRESHOLD_0                          0x08
 #define ALP_THRESHOLD_1                          0x00
-#define ALP_SET_DEBOUNCE                         0x90
-#define ALP_CLEAR_DEBOUNCE                       0x01
+#define ALP_SET_DEBOUNCE                         0x40
+#define ALP_CLEAR_DEBOUNCE                       0x40
 
 /* Button and ALP count and LTA betas */
 /* Memory Map Position 0x3B - 0x3C */
