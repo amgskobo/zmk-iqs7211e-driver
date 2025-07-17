@@ -75,7 +75,7 @@
 
 /* Thresholds and Debounce Settings */
 /* Memory Map Position 0x38 - 0x3A */
-#define TRACKPAD_TOUCH_SET_THRESHOLD             0x40
+#define TRACKPAD_TOUCH_SET_THRESHOLD             0x30
 #define TRACKPAD_TOUCH_CLEAR_THRESHOLD           0x20
 #define ALP_THRESHOLD_0                          0x28
 #define ALP_THRESHOLD_1                          0x00
