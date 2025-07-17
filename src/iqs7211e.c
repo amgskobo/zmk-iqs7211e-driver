@@ -731,8 +731,17 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
     int8_t report_dy = (smooth_dy > 127) ? 127 : (smooth_dy < -127) ? -127
                                                                     : (int8_t)smooth_dy;
 
-    input_report_rel(data->dev, INPUT_REL_X, report_dx, false, K_NO_WAIT);
-    input_report_rel(data->dev, INPUT_REL_Y, report_dy, true, K_NO_WAIT); // sync=true
+    if (num_fingers == 0)
+    {
+        data->touch_count = 0;
+    }
+    data->touch_count++;
+
+    if (data->touch_count > 8)
+    {
+        input_report_rel(data->dev, INPUT_REL_X, report_dx, false, K_NO_WAIT);
+        input_report_rel(data->dev, INPUT_REL_Y, report_dy, true, K_NO_WAIT); // sync=true
+    }
 }
 
 static int16_t calc_delta(uint16_t current, uint16_t prev)
