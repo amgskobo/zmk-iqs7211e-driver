@@ -79,6 +79,7 @@ struct iqs7211e_data
     bool reset_called;
     uint8_t gestures[2];
     uint8_t info_flags[2];
+    uint8_t touch_count;
     uint16_t finger_1_x;
     uint16_t finger_1_y;
     uint16_t finger_2_x;
