@@ -79,7 +79,7 @@
 #define TRACKPAD_TOUCH_CLEAR_THRESHOLD           0x18
 #define ALP_THRESHOLD_0                          0x08
 #define ALP_THRESHOLD_1                          0x00
-#define ALP_SET_DEBOUNCE                         0x04
+#define ALP_SET_DEBOUNCE                         0x90
 #define ALP_CLEAR_DEBOUNCE                       0x04
 
 /* Button and ALP count and LTA betas */
