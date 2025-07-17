@@ -696,7 +696,7 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
 {
     iqs7211e_queue_value_updates(data);
     uint8_t num_fingers = iqs7211e_get_num_fingers(data);
-    LOG_INF("Fingers: %d", num_fingers);
+    LOG_INF("Fingers: %d, Gestures: %02X %02X", num_fingers, data->gestures[0], data->gestures[1]);
     LOG_INF("Finger 1: X=%d, Y=%d", data->finger_1_x, data->finger_1_y);
     LOG_INF("Finger 2: X=%d, Y=%d", data->finger_2_x, data->finger_2_y);
 
