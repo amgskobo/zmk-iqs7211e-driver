@@ -30,6 +30,7 @@ static int iqs7211e_run_ati(struct iqs7211e_data *data);
 static void iqs7211e_queue_value_updates(struct iqs7211e_data *data);
 static int iqs7211e_set_event_mode(struct iqs7211e_data *data);
 static enum iqs7211e_power_mode iqs7211e_get_power_mode(const struct iqs7211e_data *data);
+static enum iqs7211e_gestures_event iqs7211e_get_touchpad_event(const struct iqs7211e_data *data);
 static uint8_t iqs7211e_get_bit(uint8_t byte, uint8_t pos);
 static uint8_t iqs7211e_get_num_fingers(const struct iqs7211e_data *data);
 static int16_t calc_delta(uint16_t current, uint16_t prev);
@@ -348,6 +349,66 @@ static enum iqs7211e_power_mode iqs7211e_get_power_mode(const struct iqs7211e_da
     else
     {
         return IQS7211E_POWER_UNKNOWN;
+    }
+}
+
+static enum iqs7211e_gestures_event iqs7211e_get_touchpad_event(const struct iqs7211e_data *data)
+{
+    if (iqs7211e_get_bit(data->gestures[0], IQS7211E_GESTURE_SINGLE_TAP_BIT))
+    {
+        return IQS7211E_GESTURE_SINGLE_TAP;
+    }
+    else if (iqs7211e_get_bit(data->gestures[0], IQS7211E_GESTURE_DOUBLE_TAP_BIT))
+    {
+        return IQS7211E_GESTURE_DOUBLE_TAP;
+    }
+    else if (iqs7211e_get_bit(data->gestures[0], IQS7211E_GESTURE_TRIPLE_TAP_BIT))
+    {
+        return IQS7211E_GESTURE_TRIPLE_TAP;
+    }
+    else if (iqs7211e_get_bit(data->gestures[0], IQS7211E_GESTURE_PRESS_HOLD_BIT))
+    {
+        return IQS7211E_GESTURE_PRESS_HOLD;
+    }
+    else if (iqs7211e_get_bit(data->gestures[0], IQS7211E_GESTURE_PALM_GESTURE_BIT))
+    {
+        return IQS7211E_GESTURE_PALM_GESTURE;
+    }
+    else if (iqs7211e_get_bit(data->gestures[1], IQS7211E_GESTURE_SWIPE_X_POSITIVE_BIT))
+    {
+        return IQS7211E_GESTURE_SWIPE_X_POSITIVE;
+    }
+    else if (iqs7211e_get_bit(data->gestures[1], IQS7211E_GESTURE_SWIPE_X_NEGATIVE_BIT))
+    {
+        return IQS7211E_GESTURE_SWIPE_X_NEGATIVE;
+    }
+    else if (iqs7211e_get_bit(data->gestures[1], IQS7211E_GESTURE_SWIPE_Y_POSITIVE_BIT))
+    {
+        return IQS7211E_GESTURE_SWIPE_Y_POSITIVE;
+    }
+    else if (iqs7211e_get_bit(data->gestures[1], IQS7211E_GESTURE_SWIPE_Y_NEGATIVE_BIT))
+    {
+        return IQS7211E_GESTURE_SWIPE_Y_NEGATIVE;
+    }
+    else if (iqs7211e_get_bit(data->gestures[1], IQS7211E_GESTURE_SWIPE_HOLD_X_POSITIVE_BIT))
+    {
+        return IQS7211E_GESTURE_SWIPE_HOLD_X_POSITIVE;
+    }
+    else if (iqs7211e_get_bit(data->gestures[1], IQS7211E_GESTURE_SWIPE_HOLD_X_NEGATIVE_BIT))
+    {
+        return IQS7211E_GESTURE_SWIPE_HOLD_X_NEGATIVE;
+    }
+    else if (iqs7211e_get_bit(data->gestures[1], IQS7211E_GESTURE_SWIPE_HOLD_Y_POSITIVE_BIT))
+    {
+        return IQS7211E_GESTURE_SWIPE_HOLD_Y_POSITIVE;
+    }
+    else if (iqs7211e_get_bit(data->gestures[1], IQS7211E_GESTURE_SWIPE_HOLD_Y_NEGATIVE_BIT))
+    {
+        return IQS7211E_GESTURE_SWIPE_HOLD_Y_NEGATIVE;
+    }
+    else
+    {
+        return IQS7211E_GESTURE_NONE;
     }
 }
 
@@ -696,9 +757,27 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
 {
     iqs7211e_queue_value_updates(data);
     uint8_t num_fingers = iqs7211e_get_num_fingers(data);
-    LOG_INF("Fingers: %d, Gestures: %02X %02X", num_fingers, data->gestures[0], data->gestures[1]);
+    uint8_t gesture_event = iqs7211e_get_touchpad_event(data);
+    LOG_INF("Fingers: %d, Gestures: %d", gesture);
     LOG_INF("Finger 1: X=%d, Y=%d", data->finger_1_x, data->finger_1_y);
     LOG_INF("Finger 2: X=%d, Y=%d", data->finger_2_x, data->finger_2_y);
+
+    if (gesture_event == IQS7211E_GESTURE_SINGLE_TAP && config->single > 0)
+    {
+        input_report_key(data->dev, INPUT_BTN_0 + config->single_tap - 1, true, true, K_NO_WAIT);
+    }
+    if (gesture_event == IQS7211E_GESTURE_DOUBLE_TAP && config->double_tap > 0)
+    {
+        input_report_key(data->dev, INPUT_BTN_0 + config->press_hold - 1, true, true, K_NO_WAIT);
+    }
+    if (gesture_event == IQS7211E_GESTURE_TRIPLE_TAP && config->triple_tap > 0)
+    {
+        input_report_key(data->dev, INPUT_BTN_0 + config->press_hold - 1, true, true, K_NO_WAIT);
+    }
+    if (gesture_event == IQS7211E_GESTURE_PRESS_HOLD && config->press_hold > 0)
+    {
+        input_report_key(data->dev, INPUT_BTN_0 + config->press_hold - 1, true, true, K_NO_WAIT);
+    }
 
     if (data->finger_1_prev_x == 0)
     {
@@ -822,18 +901,24 @@ int iqs7211e_init(const struct device *dev)
     return 0;
 }
 
-static struct iqs7211e_data iqs7211e_data;
+#define IQS7211E_DEFINE(inst)                                       \
+    static struct iqs7211e_data iqs7211e_data_##inst;               \
+    static const struct iqs7211e_config iqs7211e_config_##inst = {  \
+        .i2c = I2C_DT_SPEC_INST_GET(inst),                          \
+        .irq_gpio = GPIO_DT_SPEC_INST_GET(inst, irq_gpios),         \
+        .single_tap = DT_PROP_OR(DT_DRV_INST(inst), single_tap, 0), \
+        .double_tap = DT_PROP_OR(DT_DRV_INST(inst), double_tap, 0), \
+        .triple_tap = DT_PROP_OR(DT_DRV_INST(inst), triple_tap, 0), \
+        .press_hold = DT_PROP_OR(DT_DRV_INST(inst), press_hold, 0), \
+    };                                                              \
+                                                                    \
+    DEVICE_DT_INST_DEFINE(inst,                                     \
+                          &iqs7211e_init,                           \
+                          NULL,                                     \
+                          &iqs7211e_data_##inst,                    \
+                          &iqs7211e_config_##inst,                  \
+                          POST_KERNEL,                              \
+                          CONFIG_INPUT_INIT_PRIORITY,               \
+                          NULL);
 
-static const struct iqs7211e_config iqs7211e_config = {
-    .i2c = I2C_DT_SPEC_INST_GET(0),
-    .irq_gpio = GPIO_DT_SPEC_INST_GET(0, irq_gpios),
-};
-
-DEVICE_DT_INST_DEFINE(0,
-                      &iqs7211e_init,
-                      NULL,
-                      &iqs7211e_data,
-                      &iqs7211e_config,
-                      POST_KERNEL,
-                      CONFIG_INPUT_INIT_PRIORITY,
-                      NULL);
+DT_INST_FOREACH_STATUS_OKAY(IQS7211E_DEFINE)

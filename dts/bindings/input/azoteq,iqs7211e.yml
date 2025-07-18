@@ -12,3 +12,31 @@ properties:
     type: phandle-array
     required: true
     description: Interrupt pin
+
+  single-tap:
+    type: int
+    default: 0
+    description: |
+      Action to take on single tap.
+      0 = disabled, 1 = BTN_0, 2 = BTN_1, 3 = BTN_2
+
+  double-tap:
+    type: int
+    default: 0
+    description: |
+      Action to take on double tap.
+      0 = disabled, 1 = BTN_0, 2 = BTN_1, 3 = BTN_2
+
+  triple-tap:
+    type: int
+    default: 0
+    description: |
+      Action to take on triple tap.
+      0 = disabled, 1 = BTN_0, 2 = BTN_1, 3 = BTN_2
+
+  press-hold:
+    type: int
+    default: 0
+    description: |
+      Action to take on press and hold.
+      0 = disabled, 1 = BTN_0, 2 = BTN_1, 3 = BTN_2
