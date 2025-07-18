@@ -762,17 +762,17 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
     LOG_INF("Finger 1: X=%d, Y=%d", data->finger_1_x, data->finger_1_y);
     LOG_INF("Finger 2: X=%d, Y=%d", data->finger_2_x, data->finger_2_y);
 
-    if (gesture_event == IQS7211E_GESTURE_SINGLE_TAP && config->single > 0)
+    if (gesture_event == IQS7211E_GESTURE_SINGLE_TAP && config->single_tap > 0)
     {
         input_report_key(data->dev, INPUT_BTN_0 + config->single_tap - 1, true, true, K_NO_WAIT);
     }
     if (gesture_event == IQS7211E_GESTURE_DOUBLE_TAP && config->double_tap > 0)
     {
-        input_report_key(data->dev, INPUT_BTN_0 + config->press_hold - 1, true, true, K_NO_WAIT);
+        input_report_key(data->dev, INPUT_BTN_0 + config->double_tap - 1, true, true, K_NO_WAIT);
     }
     if (gesture_event == IQS7211E_GESTURE_TRIPLE_TAP && config->triple_tap > 0)
     {
-        input_report_key(data->dev, INPUT_BTN_0 + config->press_hold - 1, true, true, K_NO_WAIT);
+        input_report_key(data->dev, INPUT_BTN_0 + config->triple_tap - 1, true, true, K_NO_WAIT);
     }
     if (gesture_event == IQS7211E_GESTURE_PRESS_HOLD && config->press_hold > 0)
     {
