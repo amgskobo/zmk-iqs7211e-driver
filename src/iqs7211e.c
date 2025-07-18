@@ -731,8 +731,10 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
         data->touch_count = 0;
     }
     // Skip over 50 signal difference
-    if (((dx - data->finger_1_prev_dx) > (50 << 9)) || ((dx - data->finger_1_prev_dx) < -(50 << 9)) ||
-        ((dy - data->finger_1_prev_dy) > (50 << 9)) || ((dy - data->finger_1_prev_dy) < -(50 << 9)))
+    if (((dx - data->finger_1_prev_dx) > (50 << 9) && data->finger_1_prev_dx < 0) ||
+        ((dx - data->finger_1_prev_dx) < -(50 << 9) && data->finger_1_prev_dx > 0) ||
+        ((dy - data->finger_1_prev_dy) > (50 << 9) && data->finger_1_prev_dy < 0) ||
+        ((dy - data->finger_1_prev_dy) < -(50 << 9) && data->finger_1_prev_dy > 0))
     {
 
         data->touch_count = 0;
