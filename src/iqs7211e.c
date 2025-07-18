@@ -714,13 +714,6 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
     int16_t dx = calc_delta(data->finger_1_x, data->finger_1_prev_x);
     int16_t dy = calc_delta(data->finger_1_y, data->finger_1_prev_y);
 
-    bool flash_skip = false;
-    if ((dx - data->finger_1_prev_dx > 50) || (dx - data->finger_1_prev_dx < -50) ||
-        (dy - data->finger_1_prev_dy > 50) || (dy - data->finger_1_prev_dy < -50))
-    {
-        flash_skip = true;
-    }
-
     // smooth_dx = (dx + data->finger_1_prev_dx) / 2;
     int16_t smooth_dx = (dx + data->finger_1_prev_dx) >> 1;
     int16_t smooth_dy = (dy + data->finger_1_prev_dy) >> 1;
@@ -735,6 +728,13 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
 
     if (num_fingers == 0)
     {
+        data->touch_count = 0;
+    }
+    // Skip over 50 signal difference
+    if (((dx - data->finger_1_prev_dx) > (50 << 9)) || ((dx - data->finger_1_prev_dx) < -(50 << 9)) ||
+        ((dy - data->finger_1_prev_dy) > (50 << 9)) || ((dy - data->finger_1_prev_dy) < -(50 << 9)))
+    {
+
         data->touch_count = 0;
     }
     data->touch_count++;
