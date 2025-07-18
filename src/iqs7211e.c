@@ -739,7 +739,7 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
     }
     data->touch_count++;
 
-    if (data->touch_count > 3 && !flash_skip)
+    if (data->touch_count > 3)
     {
         input_report_rel(data->dev, INPUT_REL_X, report_dx, false, K_NO_WAIT);
         input_report_rel(data->dev, INPUT_REL_Y, report_dy, true, K_NO_WAIT); // sync=true
