@@ -714,14 +714,16 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
     int16_t dx = calc_delta(data->finger_1_x, data->finger_1_prev_x);
     int16_t dy = calc_delta(data->finger_1_y, data->finger_1_prev_y);
 
+    bool flash_skip = false;
+    if ((dx - data->finger_1_prev_dx > 50) || (dx - data->finger_1_prev_dx < -50) ||
+        (dy - data->finger_1_prev_dy > 50) || (dy - data->finger_1_prev_dy < -50))
+    {
+        flash_skip = true;
+    }
+
     // smooth_dx = (dx + data->finger_1_prev_dx) / 2;
     int16_t smooth_dx = (dx + data->finger_1_prev_dx) >> 1;
     int16_t smooth_dy = (dy + data->finger_1_prev_dy) >> 1;
-
-    data->finger_1_prev_x = data->finger_1_x;
-    data->finger_1_prev_y = data->finger_1_y;
-    data->finger_1_prev_dx = dx;
-    data->finger_1_prev_dy = dy;
 
     smooth_dx = smooth_dx >> 9; // dx/512
     smooth_dy = smooth_dy >> 9;
@@ -737,11 +739,15 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
     }
     data->touch_count++;
 
-    if (data->touch_count > 3)
+    if (data->touch_count > 3 && !flash_skip)
     {
         input_report_rel(data->dev, INPUT_REL_X, report_dx, false, K_NO_WAIT);
         input_report_rel(data->dev, INPUT_REL_Y, report_dy, true, K_NO_WAIT); // sync=true
     }
+    data->finger_1_prev_x = data->finger_1_x;
+    data->finger_1_prev_y = data->finger_1_y;
+    data->finger_1_prev_dx = dx;
+    data->finger_1_prev_dy = dy;
 }
 
 static int16_t calc_delta(uint16_t current, uint16_t prev)
