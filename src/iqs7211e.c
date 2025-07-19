@@ -761,21 +761,50 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
     LOG_INF("Finger 1: X=%d, Y=%d", data->finger_1_x, data->finger_1_y);
     LOG_INF("Finger 2: X=%d, Y=%d", data->finger_2_x, data->finger_2_y);
 
-    if (gesture_event == IQS7211E_GESTURE_SINGLE_TAP && config->single_tap > 0)
+    switch (gesture_event)
     {
-        input_report_key(data->dev, INPUT_BTN_0 + config->single_tap - 1, true, true, K_NO_WAIT);
+    case IQS7211E_GESTURE_SINGLE_TAP:
+        if (config->single_tap > 0)
+        {
+            input_report_key(data->dev, INPUT_BTN_0 + config->single_tap - 1, true, true, K_FOREVER);
+            input_report_key(data->dev, INPUT_BTN_0 + config->single_tap - 1, false, true, K_FOREVER);
+        }
+        break;
+    case IQS7211E_GESTURE_DOUBLE_TAP:
+        if (config->double_tap > 0)
+        {
+            for (int i = 0; i < 2; i++)
+            {
+                input_report_key(data->dev, INPUT_BTN_0 + config->double_tap - 1, true, true, K_FOREVER);
+                input_report_key(data->dev, INPUT_BTN_0 + config->double_tap - 1, false, true, K_FOREVER);
+            }
+        }
+        break;
+    case IQS7211E_GESTURE_TRIPLE_TAP:
+        if (config->triple_tap > 0)
+        {
+            for (int i = 0; i < 3; i++)
+            {
+                input_report_key(data->dev, INPUT_BTN_0 + config->triple_tap - 1, true, true, K_FOREVER);
+                input_report_key(data->dev, INPUT_BTN_0 + config->triple_tap - 1, false, true, K_FOREVER);
+            }
+        }
+        break;
+    case IQS7211E_GESTURE_PRESS_HOLD:
+        if (config->press_hold > 0 && data->start_tap == 0)
+        {
+            input_report_key(data->dev, INPUT_BTN_0 + config->press_hold - 1, true, true, K_FOREVER);
+            data->start_tap = 1;
+        }
+        break;
+    default:
+        break;
     }
-    if (gesture_event == IQS7211E_GESTURE_DOUBLE_TAP && config->double_tap > 0)
+
+    if (num_fingers == 0 && data->start_tap == 1)
     {
-        input_report_key(data->dev, INPUT_BTN_0 + config->double_tap - 1, true, true, K_NO_WAIT);
-    }
-    if (gesture_event == IQS7211E_GESTURE_TRIPLE_TAP && config->triple_tap > 0)
-    {
-        input_report_key(data->dev, INPUT_BTN_0 + config->triple_tap - 1, true, true, K_NO_WAIT);
-    }
-    if (gesture_event == IQS7211E_GESTURE_PRESS_HOLD && config->press_hold > 0)
-    {
-        input_report_key(data->dev, INPUT_BTN_0 + config->press_hold - 1, true, true, K_NO_WAIT);
+        input_report_key(data->dev, INPUT_BTN_0 + config->press_hold - 1, false, true, K_FOREVER);
+        data->start_tap = 0;
     }
 
     if (data->finger_1_prev_x == 0)
