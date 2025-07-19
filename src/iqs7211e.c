@@ -21,7 +21,7 @@ static bool iqs7211e_read_ati_active(struct iqs7211e_data *data);
 static int iqs7211e_read_bytes(const struct i2c_dt_spec *i2c, uint8_t reg, uint8_t *buf, size_t len);
 static int iqs7211e_write_bytes(const struct i2c_dt_spec *i2c, uint8_t reg, const uint8_t *data, size_t numBytes);
 static void iqs7211e_work_handler(struct k_work *work);
-static int iqs7211e_report_data(struct iqs7211e_data *data);
+static void iqs7211e_report_data(struct iqs7211e_data *data);
 static void set_interrupt(const struct device *dev, const bool en);
 static void iqs7211e_gpio_callback(const struct device *port, struct gpio_callback *cb, uint32_t pins);
 static int iqs7211e_write_defaults(struct iqs7211e_data *data);
@@ -751,7 +751,7 @@ static void iqs7211e_work_handler(struct k_work *work)
     set_interrupt(data->dev, true);
 }
 
-static int iqs7211e_report_data(struct iqs7211e_data *data)
+static void iqs7211e_report_data(struct iqs7211e_data *data)
 {
     const struct iqs7211e_config *config = data->dev->config;
     iqs7211e_queue_value_updates(data);
