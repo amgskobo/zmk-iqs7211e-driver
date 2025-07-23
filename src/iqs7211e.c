@@ -760,54 +760,8 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
     LOG_INF("Fingers: %d, Gesture: %d", num_fingers, gesture_event);
     LOG_INF("Finger 1: X=%d, Y=%d", data->finger_1_x, data->finger_1_y);
     LOG_INF("Finger 2: X=%d, Y=%d", data->finger_2_x, data->finger_2_y);
-
-    switch (gesture_event)
-    {
-    case IQS7211E_GESTURE_SINGLE_TAP:
-        if (config->single_tap > 0)
-        {
-            input_report_key(data->dev, INPUT_BTN_0 + config->single_tap - 1, true, true, K_FOREVER);
-            input_report_key(data->dev, INPUT_BTN_0 + config->single_tap - 1, false, true, K_FOREVER);
-        }
-        break;
-    case IQS7211E_GESTURE_DOUBLE_TAP:
-        if (config->double_tap > 0)
-        {
-            for (int i = 0; i < 2; i++)
-            {
-                input_report_key(data->dev, INPUT_BTN_0 + config->double_tap - 1, true, true, K_FOREVER);
-                input_report_key(data->dev, INPUT_BTN_0 + config->double_tap - 1, false, true, K_FOREVER);
-            }
-        }
-        break;
-    case IQS7211E_GESTURE_TRIPLE_TAP:
-        if (config->triple_tap > 0)
-        {
-            for (int i = 0; i < 3; i++)
-            {
-                input_report_key(data->dev, INPUT_BTN_0 + config->triple_tap - 1, true, true, K_FOREVER);
-                input_report_key(data->dev, INPUT_BTN_0 + config->triple_tap - 1, false, true, K_FOREVER);
-            }
-        }
-        break;
-    case IQS7211E_GESTURE_PRESS_HOLD:
-        if (config->press_hold > 0 && data->start_tap == 0)
-        {
-            input_report_key(data->dev, INPUT_BTN_0 + config->press_hold - 1, true, true, K_FOREVER);
-            data->start_tap = 1;
-        }
-        break;
-    default:
-        break;
-    }
-
-    if (num_fingers == 0 && data->start_tap == 1)
-    {
-        input_report_key(data->dev, INPUT_BTN_0 + config->press_hold - 1, false, true, K_FOREVER);
-        data->start_tap = 0;
-    }
-
-    if (num_fingers != 0 && config->scroll_layer > 0 && data->finger_1_x > SCROLL_START_X && !data->is_scroll_layer_active)
+    // Layer switcher
+    if (num_fingers != 0 && config->scroll_layer > 0 && data->finger_1_x < SCROLL_START_X && !data->is_scroll_layer_active)
     {
         zmk_keymap_layer_activate(config->scroll_layer);
         data->is_scroll_layer_active = true;
@@ -819,6 +773,54 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
         zmk_keymap_layer_deactivate(config->scroll_layer);
         data->is_scroll_layer_active = false;
         LOG_INF("Scroll layer deactivated");
+    }
+    if (!data->is_scroll_layer_active)
+    {
+        switch (gesture_event)
+        {
+        case IQS7211E_GESTURE_SINGLE_TAP:
+            if (config->single_tap > 0)
+            {
+                input_report_key(data->dev, INPUT_BTN_0 + config->single_tap - 1, true, true, K_FOREVER);
+                input_report_key(data->dev, INPUT_BTN_0 + config->single_tap - 1, false, true, K_FOREVER);
+            }
+            break;
+        case IQS7211E_GESTURE_DOUBLE_TAP:
+            if (config->double_tap > 0)
+            {
+                for (int i = 0; i < 2; i++)
+                {
+                    input_report_key(data->dev, INPUT_BTN_0 + config->double_tap - 1, true, true, K_FOREVER);
+                    input_report_key(data->dev, INPUT_BTN_0 + config->double_tap - 1, false, true, K_FOREVER);
+                }
+            }
+            break;
+        case IQS7211E_GESTURE_TRIPLE_TAP:
+            if (config->triple_tap > 0)
+            {
+                for (int i = 0; i < 3; i++)
+                {
+                    input_report_key(data->dev, INPUT_BTN_0 + config->triple_tap - 1, true, true, K_FOREVER);
+                    input_report_key(data->dev, INPUT_BTN_0 + config->triple_tap - 1, false, true, K_FOREVER);
+                }
+            }
+            break;
+        case IQS7211E_GESTURE_PRESS_HOLD:
+            if (config->press_hold > 0 && data->start_tap == 0)
+            {
+                input_report_key(data->dev, INPUT_BTN_0 + config->press_hold - 1, true, true, K_FOREVER);
+                data->start_tap = 1;
+            }
+            break;
+        default:
+            break;
+        }
+
+        if (num_fingers == 0 && data->start_tap == 1)
+        {
+            input_report_key(data->dev, INPUT_BTN_0 + config->press_hold - 1, false, true, K_FOREVER);
+            data->start_tap = 0;
+        }
     }
 
     if (data->finger_1_prev_x == 0)
