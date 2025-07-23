@@ -838,9 +838,6 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
     // smooth_dx = (dx + data->finger_1_prev_dx) / 2;
     int16_t smooth_dx = (dx + data->finger_1_prev_dx) >> 1;
     int16_t smooth_dy = (dy + data->finger_1_prev_dy) >> 1;
-
-    smooth_dx = smooth_dx >> 9; // dx/512
-    smooth_dy = smooth_dy >> 9;
     // clipping
     int8_t report_dx = (smooth_dx > 127) ? 127 : (smooth_dx < -127) ? -127
                                                                     : (int8_t)smooth_dx;
@@ -852,10 +849,10 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
         data->touch_count = 0;
     }
     // Skip over 50 signal difference
-    if (((dx - data->finger_1_prev_dx) > (50 << 9) && data->finger_1_prev_dx < 0) ||
-        ((dx - data->finger_1_prev_dx) < -(50 << 9) && data->finger_1_prev_dx > 0) ||
-        ((dy - data->finger_1_prev_dy) > (50 << 9) && data->finger_1_prev_dy < 0) ||
-        ((dy - data->finger_1_prev_dy) < -(50 << 9) && data->finger_1_prev_dy > 0))
+    if (((dx - data->finger_1_prev_dx) > 50 && data->finger_1_prev_dx < 0) ||
+        ((dx - data->finger_1_prev_dx) < -50 && data->finger_1_prev_dx > 0) ||
+        ((dy - data->finger_1_prev_dy) > 50 && data->finger_1_prev_dy < 0) ||
+        ((dy - data->finger_1_prev_dy) < -50 && data->finger_1_prev_dy > 0))
     {
         data->touch_count = 0;
     }
