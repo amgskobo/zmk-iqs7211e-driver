@@ -838,11 +838,6 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
     // smooth_dx = (dx + data->finger_1_prev_dx) / 2;
     int16_t smooth_dx = (dx + data->finger_1_prev_dx) >> 1;
     int16_t smooth_dy = (dy + data->finger_1_prev_dy) >> 1;
-    // clipping
-    int8_t report_dx = (smooth_dx > 127) ? 127 : (smooth_dx < -127) ? -127
-                                                                    : (int8_t)smooth_dx;
-    int8_t report_dy = (smooth_dy > 127) ? 127 : (smooth_dy < -127) ? -127
-                                                                    : (int8_t)smooth_dy;
 
     if (num_fingers == 0)
     {
