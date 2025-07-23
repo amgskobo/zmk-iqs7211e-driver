@@ -843,12 +843,11 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
         ((dy - data->finger_1_prev_dy) > (50 << 9) && data->finger_1_prev_dy < 0) ||
         ((dy - data->finger_1_prev_dy) < -(50 << 9) && data->finger_1_prev_dy > 0))
     {
-
         data->touch_count = 0;
     }
     data->touch_count++;
 
-    if (data->touch_count > 3)
+    if (data->touch_count > 3 && gesture_event == IQS7211E_GESTURE_NONE)
     {
         input_report_rel(data->dev, INPUT_REL_X, report_dx, false, K_NO_WAIT);
         input_report_rel(data->dev, INPUT_REL_Y, report_dy, true, K_NO_WAIT); // sync=true
