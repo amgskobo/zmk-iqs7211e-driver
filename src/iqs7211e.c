@@ -809,9 +809,9 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
 
     if (num_fingers != 0 && config->scroll_layer > 0 && data->finger_1_x > SCROLL_START_X && !data->is_scroll_layer_active)
     {
-        zmk_keymap_layer_deactivate(config->scroll_layer);
+        zmk_keymap_layer_activate(config->scroll_layer);
         data->is_scroll_layer_active = true;
-        LOG_INF("Scroll layer deactivated");
+        LOG_INF("Scroll layer activated");
     }
 
     if (num_fingers == 0 && data->is_scroll_layer_active)
@@ -840,14 +840,6 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
     int16_t smooth_dy = (dy + data->finger_1_prev_dy) >> 1;
 
     if (num_fingers == 0)
-    {
-        data->touch_count = 0;
-    }
-    // Skip over 50 signal difference
-    if (((dx - data->finger_1_prev_dx) > 50 && data->finger_1_prev_dx < 0) ||
-        ((dx - data->finger_1_prev_dx) < -50 && data->finger_1_prev_dx > 0) ||
-        ((dy - data->finger_1_prev_dy) > 50 && data->finger_1_prev_dy < 0) ||
-        ((dy - data->finger_1_prev_dy) < -50 && data->finger_1_prev_dy > 0))
     {
         data->touch_count = 0;
     }
