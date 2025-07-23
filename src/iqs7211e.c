@@ -760,8 +760,17 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
     LOG_INF("Fingers: %d, Gesture: %d", num_fingers, gesture_event);
     LOG_INF("Finger 1: X=%d, Y=%d", data->finger_1_x, data->finger_1_y);
     LOG_INF("Finger 2: X=%d, Y=%d", data->finger_2_x, data->finger_2_y);
+    if (num_fingers == 0)
+    {
+        data->touch_count = 0;
+    }
+    data->touch_count++;
     // Layer switcher
-    if (num_fingers != 0 && config->scroll_layer > 0 && data->finger_1_x < SCROLL_START_X && !data->is_scroll_layer_active)
+    if (num_fingers != 0 &&
+        data->touch_count == 3 &&
+        config->scroll_layer > 0 &&
+        data->finger_1_x < SCROLL_START_X &&
+        !data->is_scroll_layer_active)
     {
         zmk_keymap_layer_activate(config->scroll_layer);
         data->is_scroll_layer_active = true;
@@ -840,12 +849,6 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
     // smooth_dx = (dx + data->finger_1_prev_dx) / 2;
     int16_t smooth_dx = (dx + data->finger_1_prev_dx) >> 1;
     int16_t smooth_dy = (dy + data->finger_1_prev_dy) >> 1;
-
-    if (num_fingers == 0)
-    {
-        data->touch_count = 0;
-    }
-    data->touch_count++;
 
     if (data->touch_count > 3 && gesture_event == IQS7211E_GESTURE_NONE)
     {
