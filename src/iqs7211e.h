@@ -51,7 +51,7 @@
 #define IQS7211E_GESTURE_SWIPE_HOLD_X_NEGATIVE_BIT 5 // 13
 #define IQS7211E_GESTURE_SWIPE_HOLD_Y_POSITIVE_BIT 6 // 14
 #define IQS7211E_GESTURE_SWIPE_HOLD_Y_NEGATIVE_BIT 7 // 15
-// scroll activate x position
+// Activate scrolling when finger moves past this X position
 #define SCROLL_START_X 1000
 
 enum iqs7211e_init_state
