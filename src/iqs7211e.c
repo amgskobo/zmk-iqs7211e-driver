@@ -769,7 +769,7 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
     if (num_fingers != 0 &&
         data->touch_count == 3 &&
         config->scroll_layer > 0 &&
-        data->finger_1_x < SCROLL_START_X &&
+        data->finger_1_x > SCROLL_START_X &&
         !data->is_scroll_layer_active)
     {
         zmk_keymap_layer_activate(config->scroll_layer);
