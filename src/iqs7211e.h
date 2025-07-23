@@ -51,6 +51,8 @@
 #define IQS7211E_GESTURE_SWIPE_HOLD_X_NEGATIVE_BIT 5 // 13
 #define IQS7211E_GESTURE_SWIPE_HOLD_Y_POSITIVE_BIT 6 // 14
 #define IQS7211E_GESTURE_SWIPE_HOLD_Y_NEGATIVE_BIT 7 // 15
+// scroll activate x position
+#define SCROLL_START_X 30000
 
 enum iqs7211e_init_state
 {
@@ -105,6 +107,7 @@ struct iqs7211e_config
     uint8_t double_tap;
     uint8_t triple_tap;
     uint8_t press_hold;
+    uint8_t scroll_layer;
 };
 
 struct iqs7211e_data
@@ -114,6 +117,7 @@ struct iqs7211e_data
     struct k_work work;
     enum iqs7211e_init_state init_state;
     bool reset_called;
+    bool is_scroll_layer_active;
     uint8_t gestures[2];
     uint8_t info_flags[2];
     uint8_t touch_count;

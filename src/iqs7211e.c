@@ -269,8 +269,8 @@ static void iqs7211e_queue_value_updates(struct iqs7211e_data *data)
     data->info_flags[0] = buf[2];
     data->info_flags[1] = buf[3];
 
-    data->finger_1_x = (buf[4] << 8) | buf[5];
-    data->finger_1_y = (buf[6] << 8) | buf[7];
+    data->finger_1_x = (buf[5] << 8) | buf[4];
+    data->finger_1_y = (buf[7] << 8) | buf[6];
 
     ret = iqs7211e_read_bytes(&config->i2c, IQS7211E_MM_FINGER_2_X, buf, 4);
     if (ret != 0)
@@ -279,8 +279,8 @@ static void iqs7211e_queue_value_updates(struct iqs7211e_data *data)
         return;
     }
 
-    data->finger_2_x = (buf[0] << 8) | buf[1];
-    data->finger_2_y = (buf[2] << 8) | buf[3];
+    data->finger_2_x = (buf[1] << 8) | buf[0];
+    data->finger_2_y = (buf[3] << 8) | buf[2];
 
     LOG_DBG("Gestures: %02X %02X, InfoFlags: %02X %02X", data->gestures[0], data->gestures[1], data->info_flags[0], data->info_flags[1]);
     LOG_DBG("F1_X: %d, F1_Y: %d", data->finger_1_x, data->finger_1_y);
@@ -807,6 +807,20 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
         data->start_tap = 0;
     }
 
+    if (num_fingers != 0 && config->scroll_layer > 0 && data->finger_1_x > SCROLL_START_X && !data->is_scroll_layer_active)
+    {
+        zmk_keymap_layer_deactivate(config->scroll_layer);
+        data->is_scroll_layer_active = true;
+        LOG_INF("Scroll layer deactivated");
+    }
+
+    if (num_fingers == 0 && data->is_scroll_layer_active)
+    {
+        zmk_keymap_layer_deactivate(config->scroll_layer);
+        data->is_scroll_layer_active = false;
+        LOG_INF("Scroll layer deactivated");
+    }
+
     if (data->finger_1_prev_x == 0)
     {
         data->finger_1_prev_x = data->finger_1_x;
@@ -928,24 +942,25 @@ int iqs7211e_init(const struct device *dev)
     return 0;
 }
 
-#define IQS7211E_DEFINE(inst)                                       \
-    static struct iqs7211e_data iqs7211e_data_##inst;               \
-    static const struct iqs7211e_config iqs7211e_config_##inst = {  \
-        .i2c = I2C_DT_SPEC_INST_GET(inst),                          \
-        .irq_gpio = GPIO_DT_SPEC_INST_GET(inst, irq_gpios),         \
-        .single_tap = DT_PROP_OR(DT_DRV_INST(inst), single_tap, 0), \
-        .double_tap = DT_PROP_OR(DT_DRV_INST(inst), double_tap, 0), \
-        .triple_tap = DT_PROP_OR(DT_DRV_INST(inst), triple_tap, 0), \
-        .press_hold = DT_PROP_OR(DT_DRV_INST(inst), press_hold, 0), \
-    };                                                              \
-                                                                    \
-    DEVICE_DT_INST_DEFINE(inst,                                     \
-                          &iqs7211e_init,                           \
-                          NULL,                                     \
-                          &iqs7211e_data_##inst,                    \
-                          &iqs7211e_config_##inst,                  \
-                          POST_KERNEL,                              \
-                          CONFIG_INPUT_INIT_PRIORITY,               \
+#define IQS7211E_DEFINE(inst)                                           \
+    static struct iqs7211e_data iqs7211e_data_##inst;                   \
+    static const struct iqs7211e_config iqs7211e_config_##inst = {      \
+        .i2c = I2C_DT_SPEC_INST_GET(inst),                              \
+        .irq_gpio = GPIO_DT_SPEC_INST_GET(inst, irq_gpios),             \
+        .single_tap = DT_PROP_OR(DT_DRV_INST(inst), single_tap, 0),     \
+        .double_tap = DT_PROP_OR(DT_DRV_INST(inst), double_tap, 0),     \
+        .triple_tap = DT_PROP_OR(DT_DRV_INST(inst), triple_tap, 0),     \
+        .press_hold = DT_PROP_OR(DT_DRV_INST(inst), press_hold, 0),     \
+        .scroll_layer = DT_PROP_OR(DT_DRV_INST(inst), scroll_layer, 0), \
+    };                                                                  \
+                                                                        \
+    DEVICE_DT_INST_DEFINE(inst,                                         \
+                          &iqs7211e_init,                               \
+                          NULL,                                         \
+                          &iqs7211e_data_##inst,                        \
+                          &iqs7211e_config_##inst,                      \
+                          POST_KERNEL,                                  \
+                          CONFIG_INPUT_INIT_PRIORITY,                   \
                           NULL);
 
 DT_INST_FOREACH_STATUS_OKAY(IQS7211E_DEFINE)
