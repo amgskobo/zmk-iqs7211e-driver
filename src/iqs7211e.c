@@ -777,12 +777,6 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
         LOG_INF("Scroll layer activated");
     }
 
-    if (num_fingers == 0 && data->is_scroll_layer_active)
-    {
-        zmk_keymap_layer_deactivate(config->scroll_layer);
-        data->is_scroll_layer_active = false;
-        LOG_INF("Scroll layer deactivated");
-    }
     if (!data->is_scroll_layer_active)
     {
         switch (gesture_event)
@@ -830,6 +824,13 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
             input_report_key(data->dev, INPUT_BTN_0 + config->press_hold - 1, false, true, K_FOREVER);
             data->start_tap = 0;
         }
+    }
+
+    if (num_fingers == 0 && data->is_scroll_layer_active)
+    {
+        zmk_keymap_layer_deactivate(config->scroll_layer);
+        data->is_scroll_layer_active = false;
+        LOG_INF("Scroll layer deactivated");
     }
 
     if (data->finger_1_prev_x == 0)
