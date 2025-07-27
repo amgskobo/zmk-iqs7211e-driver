@@ -770,12 +770,45 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
     if (num_fingers != 0 &&
         data->touch_count <= 3 &&
         config->scroll_layer > 0 &&
-        data->finger_1_x > SCROLL_START_X &&
         !data->is_scroll_layer_active)
     {
-        zmk_keymap_layer_activate(config->scroll_layer);
-        data->is_scroll_layer_active = true;
-        LOG_INF("Scroll layer activated");
+        switch (config->rotate_cw)
+        {
+        case 0:
+            if (data->finger_1_x > config->scroll_start)
+            {
+                zmk_keymap_layer_activate(config->scroll_layer);
+                data->is_scroll_layer_active = true;
+                LOG_INF("Scroll layer activated");
+            }
+            break;
+        case 1: // 90 degree (cw)
+            if (data->finger_1_y < config->scroll_start)
+            {
+                zmk_keymap_layer_activate(config->scroll_layer);
+                data->is_scroll_layer_active = true;
+                LOG_INF("Scroll layer activated");
+            }
+            break;
+        case 2: // 180 degree
+            if (data->finger_1_x < config->scroll_start)
+            {
+                zmk_keymap_layer_activate(config->scroll_layer);
+                data->is_scroll_layer_active = true;
+                LOG_INF("Scroll layer activated");
+            }
+            break;
+        case 3: // 270 degree
+            if (data->finger_1_y > config->scroll_start)
+            {
+                zmk_keymap_layer_activate(config->scroll_layer);
+                data->is_scroll_layer_active = true;
+                LOG_INF("Scroll layer activated");
+            }
+            break;
+        default:
+            break;
+        }
     }
 
     if (!data->is_scroll_layer_active)
@@ -943,6 +976,8 @@ int iqs7211e_init(const struct device *dev)
         .triple_tap = DT_PROP_OR(DT_DRV_INST(inst), triple_tap, 0),     \
         .press_hold = DT_PROP_OR(DT_DRV_INST(inst), press_hold, 0),     \
         .scroll_layer = DT_PROP_OR(DT_DRV_INST(inst), scroll_layer, 0), \
+        .scroll_start = DT_PROP_OR(DT_DRV_INST(inst), scroll_start, 0), \
+        .rotate_cw = DT_PROP_OR(DT_DRV_INST(inst), rotate_cw, 0),       \
     };                                                                  \
                                                                         \
     DEVICE_DT_INST_DEFINE(inst,                                         \
