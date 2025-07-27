@@ -12,28 +12,24 @@ properties:
     type: phandle-array
     required: true
     description: Interrupt pin
-
   single-tap:
     type: int
     default: 0
     description: |
       Action to take on single tap.
       0 = disabled, 1 = BTN_0, 2 = BTN_1, 3 = BTN_2
-
   double-tap:
     type: int
     default: 0
     description: |
       Action to take on double tap.
       0 = disabled, 1 = BTN_0, 2 = BTN_1, 3 = BTN_2
-
   triple-tap:
     type: int
     default: 0
     description: |
       Action to take on triple tap.
       0 = disabled, 1 = BTN_0, 2 = BTN_1, 3 = BTN_2
-
   press-hold:
     type: int
     default: 0
@@ -46,3 +42,15 @@ properties:
     description: |
       Action to active scroll layer.
       0 = disabled, others = layer num
+  scroll_start:
+    type: int
+    default: 1000
+    description: |
+      threshold to active scroll layer. (x or y)
+      currently it has 1024x,1024y max resolution.
+  rotate_cw:
+    type: int
+    default: 0
+    description: |
+      rotate angle for scroll slider (CW)
+      0 = 0 degree, 1 = 90 degree, 2 = 180 degree, 3 = 270 degree
