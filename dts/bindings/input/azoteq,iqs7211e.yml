@@ -44,9 +44,9 @@ properties:
       0 = disabled, others = layer num
   scroll_start:
     type: int
-    default: 1000
+    default: 20
     description: |
-      threshold to active scroll layer. (x or y)
+      resolution threshold to active scroll layer. (x or y padding from edge)
       currently it has 1024x,1024y max resolution.
   rotate_cw:
     type: int
