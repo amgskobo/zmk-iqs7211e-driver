@@ -775,7 +775,7 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
         switch (config->rotate_cw)
         {
         case 0:
-            if (data->finger_1_x > config->scroll_start)
+            if (data->finger_1_x > RESOLUTION_X - config->scroll_start)
             {
                 zmk_keymap_layer_activate(config->scroll_layer);
                 data->is_scroll_layer_active = true;
@@ -799,7 +799,7 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
             }
             break;
         case 3: // 270 degree
-            if (data->finger_1_y > config->scroll_start)
+            if (data->finger_1_y > RESOLUTION_Y - config->scroll_start)
             {
                 zmk_keymap_layer_activate(config->scroll_layer);
                 data->is_scroll_layer_active = true;
