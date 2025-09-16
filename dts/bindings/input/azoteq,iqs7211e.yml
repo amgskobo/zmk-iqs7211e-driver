@@ -16,41 +16,41 @@ properties:
     type: int
     default: 0
     description: |
-      Action to take on single tap.
+      Set the button triggered by a single-tap.
       0 = disabled, 1 = BTN_0, 2 = BTN_1, 3 = BTN_2
   double-tap:
     type: int
     default: 0
     description: |
-      Action to take on double tap.
+      Set the button triggered by double-tap.
       0 = disabled, 1 = BTN_0, 2 = BTN_1, 3 = BTN_2
   triple-tap:
     type: int
     default: 0
     description: |
-      Action to take on triple tap.
+      Set the button triggered by triple-tap.
       0 = disabled, 1 = BTN_0, 2 = BTN_1, 3 = BTN_2
   press-hold:
     type: int
     default: 0
     description: |
-      Action to take on press and hold.
+      Set the button triggered by press-hold.
       0 = disabled, 1 = BTN_0, 2 = BTN_1, 3 = BTN_2
   scroll_layer:
     type: int
     default: 0
     description: |
-      Action to active scroll layer.
+      Set the active scroll layer.
       0 = disabled, others = layer num
   scroll_start:
     type: int
     default: 20
     description: |
-      resolution threshold to active scroll layer. (x or y padding from edge)
+      Set resolution threshold to active scroll layer. (padding from edge)
       currently it has 1024x,1024y max resolution.
   rotate_cw:
     type: int
     default: 0
     description: |
-      rotate angle for scroll slider (CW)
-      0 = 0 degree, 1 = 90 degree, 2 = 180 degree, 3 = 270 degree
+      Set rotate angle for scroll slider area(CW)
+      0 = 0 deg, 1 = 90 deg, 2 = 180 deg, 3 = 270 deg
