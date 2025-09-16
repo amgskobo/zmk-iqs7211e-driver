@@ -2,8 +2,8 @@
 <img src=/img/iqs7211e_trackpad01.png width="30%" />
 
 ## 1. Overview
-This repository provides a driver for the **Azoteq IQS7211E touch/proximity** sensor for ZMK (Zephyr Mechanical Keyboard firmware) 3.5.
-The driver is inspired by the [ZMK PMW3610 driver](https://github.com/inorichi/zmk-pmw3610-driver). While the IQS7211E chip itself supports full 2 fingers input, this small trackpad module only supports single-finger gestures. Supports standard ZMK interrupt-driven input, enabling responsive event handling.
+This repository provides a driver for the **"Trackpad01"** (Azoteq IQS7211E touch/proximity sensor chip) for ZMK (Zephyr Mechanical Keyboard firmware) 3.5.
+The driver is inspired by the [ZMK PMW3610 driver](https://github.com/inorichi/zmk-pmw3610-driver). While the IQS7211E chip itself supports full 2 fingers input, this small trackpad module **(padsize is 22mmX22mm)** only supports single-finger gestures. Supports standard ZMK interrupt-driven input, enabling responsive event handling.
 
 The driver also implements touch gesture and scroll slider features:
 - Single-tap / Double-tap / Triple-tap
@@ -144,19 +144,19 @@ The GitHub Actions workflow automatically builds the firmware and generates arti
 
 ## 4. HW and Dimensions
 
-### 4.1 Front view
+### 4.1 Trackpad01 Front view (HASL)
 <img src=/img/iqs7211e_trackpad01_front.png width="50%" />
 
-### 4.2 Back view
+### 4.2 Trackpad01 Back view (HASL)
 
 <img src=/img/iqs7211e_trackpad01_back.png width="50%" />
 
-### 4.3 Pinout (all +3V3 logic) 
+### 4.3 Pin Assignment (all +3V3 logic) 
 | PIN | value | info |
 |-----|-------|------|
 |1  |  GND |  - |
 |2  |  GND |  - |
-|3  |  RDY | interrupt pin |
+|3  |  RDY | irq interrupt pin |
 |4  |  +3V3 | VDD |
 |5  |  SDA | i2c data| 
 |6  |  SCL | i2c clock |
@@ -169,22 +169,22 @@ The GitHub Actions workflow automatically builds the firmware and generates arti
 | `C6` | 4.7uF | 0805_SMD | 1 | |
 | `C7` | 100nF | 0805_SMD | 1 | |
 | `R1,R2,R3` | 4.7k | 0805_SMD | 3| |
-| `J1` | PinHeader_2x03_P2.54mm_Vertical | 2x3pin 2.54mm pitch 3.5mm height| 1 | [aliexpress](https://ja.aliexpress.com/item/1005003263426999.html?spm=a2g0o.order_list.order_list_main.16.5d86585aR1YHtk&gatewayAdapt=glo2jpn) |
-| `U1` | IQS7211E001QNR |  iqs7211E| 1| [digikey](https://www.digikey.jp/en/products/detail/azoteq-pty-ltd/IQS7211E001QNR/18627341)|
+| `J1` | PinHeader_2x03_P2.54mm_Vertical | 2x3pin 2.54mm pitch PH3.5mm height| 1 | [aliexpress](https://ja.aliexpress.com/item/1005003263426999.html?spm=a2g0o.order_list.order_list_main.16.5d86585aR1YHtk&gatewayAdapt=glo2jpn) |
+| `U1` | IQS7211E001QNR |  IQS7211E001QNR(20-QFN)| 1| [digikey](https://www.digikey.jp/en/products/detail/azoteq-pty-ltd/IQS7211E001QNR/18627341)|
 
-### 4.5 PCBA layout
+### 4.5 PCB Specifications
 The PCB used with this driver is a 2-layer FR4 board with a standard thickness of 1.6 mm. The recommended finish for the PCB is ENIG (Electroless Nickel Immersion Gold).
 
 The ENIG finish provides high durability for the edges of the trackpad and connector areas, allowing for long-term stable use. In addition, the gold layer prevents oxidation, ensuring stable touch sensitivity and response.
 
 Please note that if the PCB thickness is different from 1.6 mm, it may affect the installation and feel of the trackpad. Also, the ENIG finish may incur higher costs compared to standard finishes.
 
-### 4.5 Trackpad Surface Material
+### 4.6 Trackpad Surface Material
 Make sure to attach some kind of material to the trackpad surface.
 The trackpad will not function properly if used without any material attached. 
 Typically, we recommend a film thickness of 1-2 mm.
 
-### 4.6 TP Configuration Examples
+### 4.7 TP Configuration Examples
 
 You can modify the sensor behavior by editing the `IQS7211E_init.h` file provided by Azoteq. This file contains all necessary initialization and gesture settings.
 Edit values here to adjust:
