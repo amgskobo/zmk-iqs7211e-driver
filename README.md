@@ -23,7 +23,7 @@ The driver also implements touch gesture and scroll slider features:
 | `double-tap` | int | 0 | Button triggered by double-tap (0=disabled, 1=BTN_0, 2=BTN_1, 3=BTN_2) |
 | `triple-tap` | int | 0 | Button triggered by triple-tap (0=disabled, 1=BTN_0, 2=BTN_1, 3=BTN_2) |
 | `press-hold` | int | 0 | Button triggered by tap-and-hold (0=disabled, 1=BTN_0, 2=BTN_1, 3=BTN_2)|
-| `scroll_layer` | int | 0 | Layer activated while touching scroll slider (0=disabled, others=layer num) |
+| `scroll_layer` | int | 0 | Layer activated while first touching scroll slider area (0=disabled, others=layer num) |
 | `scroll_start` | int | 20 | Threshold/padding from right edge to activate scroll slider (max resolution 1024x/1024y) |
 | `rotate_cw` | int | 0 | Rotation angle for scroll slider area **Clockwise** (0=0°, 1=90°, 2=180°, 3=270°) |
 
@@ -168,11 +168,16 @@ The GitHub Actions workflow automatically builds the firmware and generates arti
 | `C2,C4` | 2.2uF | 0805_SMD | 2 | |
 | `C6` | 4.7uF | 0805_SMD | 1 | |
 | `C7` | 100nF | 0805_SMD | 1 | |
-| `J1` | PinHeader_2x03_P2.54mm_Vertical | 2x3pin 2.54mm pitch 3.5mm height| 1 | [aliexpress](https://ja.aliexpress.com/item/1005003263426999.html?spm=a2g0o.order_list.order_list_main.16.5d86585aR1YHtk&gatewayAdapt=glo2jpn) |
 | `R1,R2,R3` | 4.7k | 0805_SMD | 3| |
-| `U1` | IQS7211E001QNR |  iqs7211E| 1| |
+| `J1` | PinHeader_2x03_P2.54mm_Vertical | 2x3pin 2.54mm pitch 3.5mm height| 1 | [aliexpress](https://ja.aliexpress.com/item/1005003263426999.html?spm=a2g0o.order_list.order_list_main.16.5d86585aR1YHtk&gatewayAdapt=glo2jpn) |
+| `U1` | IQS7211E001QNR |  iqs7211E| 1| [digikey](https://www.digikey.jp/en/products/detail/azoteq-pty-ltd/IQS7211E001QNR/18627341)|
 
 ### 4.5 PCBA layout
+The PCB used with this driver is a 2-layer FR4 board with a standard thickness of 1.6 mm. The recommended finish for the PCB is ENIG (Electroless Nickel Immersion Gold).
+
+The ENIG finish provides high durability for the edges of the trackpad and connector areas, allowing for long-term stable use. In addition, the gold layer prevents oxidation, ensuring stable touch sensitivity and response.
+
+Please note that if the PCB thickness is different from 1.6 mm, it may affect the installation and feel of the trackpad. Also, the ENIG finish may incur higher costs compared to standard finishes.
 
 ### 4.5 Trackpad Surface Material
 Make sure to attach some kind of material to the trackpad surface.
@@ -188,4 +193,7 @@ Edit values here to adjust:
 - Hardware and ALP settings
 - Channel allocation and cycles
 
-
+For more details, looking at the datasheet&references:
+- [iqs7211e_datasheet](/docs/iqs7211e_datasheet.pdf)
+- [azd123_iqs721xy_trackpad_userguide](/docs/azd123_iqs721xy_trackpad_userguide.pdf)
+- [azd128-gamepad-trackpad-design-guide_v1.0](/docs/azd128-gamepad-trackpad-design-guide_v1.0.pdf)
