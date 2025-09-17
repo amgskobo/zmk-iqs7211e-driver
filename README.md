@@ -134,7 +134,7 @@ CONFIG_I2C=y
 CONFIG_GPIO=y
 CONFIG_INPUT=y
 CONFIG_ZMK_POINTING=y
-CONFIG_ZMK_IQS7211E=y
+CONFIG_IQS7211E=y
 ```
 
 ### 3.4 Build Firmware
@@ -186,7 +186,7 @@ Typically, we recommend a film thickness of 1-2 mm.
 
 ### 4.7 TP Configuration Examples
 
-You can modify the sensor behavior by editing the `IQS7211E_init.h` file provided by Azoteq. This file contains all necessary initialization and gesture settings.
+You can modify the sensor behavior by editing the `src/IQS7211E_init.h` file provided by Azoteq. This file contains all necessary initialization and gesture settings.
 Edit values here to adjust:
 - Gesture timing, thresholds, and distances
 - Report rates and timeouts
