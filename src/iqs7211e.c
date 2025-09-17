@@ -49,7 +49,7 @@ static bool iqs7211e_init_state(struct iqs7211e_data *data)
         }
         else
         {
-            LOG_INF("IQS7211E IQS7211E_INIT_NONE");
+            LOG_INF("prod_num != IQS7211E_PRODUCT_NUM, init_state = IQS7211E_INIT_NONE");
             data->init_state = IQS7211E_INIT_NONE;
         }
         break;
@@ -139,7 +139,7 @@ static uint16_t iqs7211e_get_product_num(struct iqs7211e_data *data)
 static int iqs7211e_read_info_flags(const struct iqs7211e_data *data, uint8_t *info_flags)
 {
     const struct iqs7211e_config *config = data->dev->config;
-    int ret = iqs7211e_read_bytes(&config->i2c, IQS7211E_INFO_FLAGS_REG, info_flags, 2);
+    int ret = iqs7211e_read_bytes(&config->i2c, IQS7211E_MM_INFO_FLAGS, info_flags, 2);
     if (ret)
     {
         LOG_ERR("Failed to read INFO_FLAGS register");
@@ -167,7 +167,7 @@ static int iqs7211e_sw_reset(struct iqs7211e_data *data)
     const struct iqs7211e_config *config = data->dev->config;
     uint8_t command[2];
     int ret;
-    ret = iqs7211e_read_bytes(&config->i2c, IQS7211E_SYSTEM_CONTROL_REG, command, 2);
+    ret = iqs7211e_read_bytes(&config->i2c, IQS7211E_MM_SYS_CONTROL, command, 2);
     if (ret)
     {
         LOG_ERR("Failed to read system control register for reset");
@@ -176,7 +176,7 @@ static int iqs7211e_sw_reset(struct iqs7211e_data *data)
 
     command[1] |= (1 << IQS7211E_SW_RESET_BIT);
 
-    ret = iqs7211e_write_bytes(&config->i2c, IQS7211E_SYSTEM_CONTROL_REG, command, 2);
+    ret = iqs7211e_write_bytes(&config->i2c, IQS7211E_MM_SYS_CONTROL, command, 2);
     if (ret)
     {
         LOG_ERR("Failed to write system control register for reset");
@@ -192,7 +192,7 @@ static int iqs7211e_acknowledge_reset(struct iqs7211e_data *data)
     uint8_t command[2];
     int ret;
 
-    ret = iqs7211e_read_bytes(&config->i2c, IQS7211E_SYSTEM_CONTROL_REG, command, 2);
+    ret = iqs7211e_read_bytes(&config->i2c, IQS7211E_MM_SYS_CONTROL, command, 2);
     if (ret)
     {
         LOG_ERR("Failed to read system control register during ACK reset");
@@ -201,7 +201,7 @@ static int iqs7211e_acknowledge_reset(struct iqs7211e_data *data)
 
     command[0] |= (1 << IQS7211E_ACK_RESET_BIT);
 
-    ret = iqs7211e_write_bytes(&config->i2c, IQS7211E_SYSTEM_CONTROL_REG, command, 2);
+    ret = iqs7211e_write_bytes(&config->i2c, IQS7211E_MM_SYS_CONTROL, command, 2);
     if (ret)
     {
         LOG_ERR("Failed to write ACK reset to system control register");
@@ -217,7 +217,7 @@ int iqs7211e_run_ati(struct iqs7211e_data *data)
     uint8_t command[2];
     int ret;
 
-    ret = iqs7211e_read_bytes(&config->i2c, IQS7211E_SYSTEM_CONTROL_REG, command, 2);
+    ret = iqs7211e_read_bytes(&config->i2c, IQS7211E_MM_SYS_CONTROL, command, 2);
     if (ret)
     {
         LOG_ERR("Failed to read command reg for ATI");
@@ -226,7 +226,7 @@ int iqs7211e_run_ati(struct iqs7211e_data *data)
 
     command[0] |= (1 << IQS7211E_TP_RE_ATI_BIT);
 
-    ret = iqs7211e_write_bytes(&config->i2c, IQS7211E_SYSTEM_CONTROL_REG, command, 2);
+    ret = iqs7211e_write_bytes(&config->i2c, IQS7211E_MM_SYS_CONTROL, command, 2);
     if (ret)
     {
         LOG_ERR("Failed to write REATI command");
@@ -720,9 +720,9 @@ static int iqs7211e_write_defaults(struct iqs7211e_data *data)
     return 0;
 }
 
-static int iqs7211e_read_bytes(const struct i2c_dt_spec *i2c, uint8_t reg, uint8_t *buf, size_t len)
+static int iqs7211e_read_bytes(const struct i2c_dt_spec *i2c, uint8_t reg, uint8_t *data, size_t len)
 {
-    int ret = i2c_write_read(i2c->bus, i2c->addr, &reg, 1, buf, len);
+    int ret = i2c_write_read(i2c->bus, i2c->addr, &reg, 1, data, len);
     if (ret)
     {
         LOG_ERR("i2c_read failed at reg 0x%02X (%zu bytes): %d", reg, len, ret);
@@ -730,15 +730,15 @@ static int iqs7211e_read_bytes(const struct i2c_dt_spec *i2c, uint8_t reg, uint8
     return ret;
 }
 
-static int iqs7211e_write_bytes(const struct i2c_dt_spec *i2c, uint8_t reg, const uint8_t *data, size_t numBytes)
+static int iqs7211e_write_bytes(const struct i2c_dt_spec *i2c, uint8_t reg, const uint8_t *data, size_t len)
 {
-    uint8_t buffer[numBytes + 1];
+    uint8_t buffer[len + 1];
     buffer[0] = reg;
-    memcpy(&buffer[1], data, numBytes);
-    int ret = i2c_write(i2c->bus, buffer, numBytes + 1, i2c->addr);
+    memcpy(&buffer[1], data, len);
+    int ret = i2c_write(i2c->bus, buffer, len + 1, i2c->addr);
     if (ret)
     {
-        LOG_ERR("i2c_write failed at reg 0x%02X (%zu bytes): %d", reg, numBytes, ret);
+        LOG_ERR("i2c_write failed at reg 0x%02X (%zu bytes): %d", reg, len, ret);
     }
     return ret;
 }
