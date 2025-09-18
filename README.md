@@ -109,16 +109,71 @@ Add the IQS7211E node in your keyboard DTS overlay file (example of XIAO_BLE boa
 };
 
 / {
-   trackpad_input_listener: trackpad_input_listener {
+    trackpad_input_listener: trackpad_input_listener {
         compatible = "zmk,input-listener";
         status = "okay";
         device = <&iqs7211e>;
-        input-processors = <&zip_xy_scaler 4 5>;
         /* Scroll slider settings with using custom input-processors */
         scroller {
             layers = <1>;
-            input-processors = <&zip_xy_scaler 1 30>, 
+            input-processors = <&zip_xy_scaler 1 20>, 
                                <&zip_xy_transform (INPUT_TRANSFORM_Y_INVERT)>,
+                               <&zip_xy_to_scroll_mapper>;
+        };
+    };
+};
+```
+Option: rotate 90 deg (rotate_cw = <1>)
+```
+/ {
+    trackpad_input_listener: trackpad_input_listener {
+        compatible = "zmk,input-listener";
+        status = "okay";
+        device = <&iqs7211e>;
+        input-processors = <&zip_xy_transform (INPUT_TRANSFORM_Y_INVERT)>,
+                           <&zip_xy_swap_mapper>;
+        scroller {
+            layers = <1>;
+            input-processors = <&zip_xy_transform (INPUT_TRANSFORM_X_INVERT | INPUT_TRANSFORM_Y_INVERT)>,
+                               <&zip_xy_swap_mapper>,
+                               <&zip_xy_scaler 1 20>, 
+                               <&zip_xy_to_scroll_mapper>;
+        };
+    };
+};
+```
+Option: rotate 180 deg (rotate_cw = <2>)
+```
+/ {
+
+    trackpad_input_listener: trackpad_input_listener {
+        compatible = "zmk,input-listener";
+        status = "okay";
+        device = <&iqs7211e>;
+        input-processors = <&zip_xy_transform (INPUT_TRANSFORM_X_INVERT | INPUT_TRANSFORM_Y_INVERT)>;
+        scroller {
+            layers = <1>;
+            input-processors = <&zip_xy_transform (INPUT_TRANSFORM_X_INVERT)>,
+                               <&zip_xy_scaler 1 20>, 
+                               <&zip_xy_to_scroll_mapper>;
+        };
+    };
+};
+```
+Option: rotate 270 deg (rotate_cw = <3>)
+```
+/ {
+
+    trackpad_input_listener: trackpad_input_listener {
+        compatible = "zmk,input-listener";
+        status = "okay";
+        device = <&iqs7211e>;
+        input-processors = <&zip_xy_transform (INPUT_TRANSFORM_X_INVERT)>,
+                           <&zip_xy_swap_mapper>;
+        scroller {
+            layers = <1>;
+            input-processors = <&zip_xy_swap_mapper>,
+                               <&zip_xy_scaler 1 20>, 
                                <&zip_xy_to_scroll_mapper>;
         };
     };
