@@ -113,7 +113,7 @@ static bool iqs7211e_init_state(struct iqs7211e_data *data)
         data->init_state = IQS7211E_INIT_DONE;
         break;
     case IQS7211E_INIT_DONE:
-        LOG_INF("IQS7211E initialization DONE");
+        LOG_INF("IQS7211E initialization successful");
         return true;
 
     default:
@@ -761,14 +761,10 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
     LOG_INF("Fingers: %d, Gesture: %d", num_fingers, gesture_event);
     LOG_INF("Finger 1: X=%d, Y=%d", data->finger_1_x, data->finger_1_y);
     LOG_INF("Finger 2: X=%d, Y=%d", data->finger_2_x, data->finger_2_y);
-    if (num_fingers == 0)
-    {
-        data->touch_count = 0;
-    }
-    data->touch_count++;
+
     // Layer switcher
     if (num_fingers != 0 &&
-        data->touch_count <= 4 &&
+        data->touch_count < 4 &&
         config->scroll_layer > 0 &&
         !data->is_scroll_layer_active)
     {
@@ -885,7 +881,7 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
     int16_t smooth_dx = (dx + data->finger_1_prev_dx) >> 1;
     int16_t smooth_dy = (dy + data->finger_1_prev_dy) >> 1;
 
-    if (data->touch_count > 4)
+    if (data->touch_count >= 4)
     {
         input_report_rel(data->dev, INPUT_REL_X, smooth_dx, false, K_NO_WAIT);
         input_report_rel(data->dev, INPUT_REL_Y, smooth_dy, true, K_NO_WAIT); // sync=true
@@ -894,6 +890,12 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
     data->finger_1_prev_y = data->finger_1_y;
     data->finger_1_prev_dx = dx;
     data->finger_1_prev_dy = dy;
+
+    data->touch_count++;
+    if (num_fingers == 0)
+    {
+        data->touch_count = 0;
+    }
 }
 
 static int16_t calc_delta(uint16_t current, uint16_t prev)
@@ -957,6 +959,7 @@ int iqs7211e_init(const struct device *dev)
         return ret;
     }
     data->init_state = IQS7211E_INIT_VERIFY_PRODUCT;
+    data->touch_count = 0;
     data->dev = dev;
 
     k_work_init(&data->work, iqs7211e_work_handler);
