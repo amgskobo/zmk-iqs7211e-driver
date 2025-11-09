@@ -10,10 +10,10 @@
 
 /* ALP ATI Compensation */
 /* Memory Map Position 0x1F - 0x20 */
-#define ALP_COMPENSATION_A_0                     0xAB
-#define ALP_COMPENSATION_A_1                     0x00
-#define ALP_COMPENSATION_B_0                     0x59
-#define ALP_COMPENSATION_B_1                     0x00
+#define ALP_COMPENSATION_A_0                     0x7C
+#define ALP_COMPENSATION_A_1                     0x0C
+#define ALP_COMPENSATION_B_0                     0xC4
+#define ALP_COMPENSATION_B_1                     0x03
 
 /* ATI Settings */
 /* Memory Map Position 0x21 - 0x27 */
@@ -75,12 +75,12 @@
 
 /* Thresholds and Debounce Settings */
 /* Memory Map Position 0x38 - 0x3A */
-#define TRACKPAD_TOUCH_SET_THRESHOLD             0x25
-#define TRACKPAD_TOUCH_CLEAR_THRESHOLD           0x14
+#define TRACKPAD_TOUCH_SET_THRESHOLD             0x14
+#define TRACKPAD_TOUCH_CLEAR_THRESHOLD           0x0E
 #define ALP_THRESHOLD_0                          0x08
 #define ALP_THRESHOLD_1                          0x00
-#define ALP_SET_DEBOUNCE                         0x40
-#define ALP_CLEAR_DEBOUNCE                       0x40
+#define ALP_SET_DEBOUNCE                         0x04
+#define ALP_CLEAR_DEBOUNCE                       0x04
 
 /* Button and ALP count and LTA betas */
 /* Memory Map Position 0x3B - 0x3C */
