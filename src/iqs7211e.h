@@ -104,11 +104,11 @@ struct iqs7211e_config
 {
     struct i2c_dt_spec i2c;
     const struct gpio_dt_spec irq_gpio;
-    uint8_t single_tap;
-    uint8_t double_tap;
-    uint8_t triple_tap;
-    uint8_t press_hold;
-    uint8_t scroll_layer;
+    int8_t single_tap;
+    int8_t double_tap;
+    int8_t triple_tap;
+    int8_t press_hold;
+    int8_t scroll_layer;
     uint16_t scroll_start;
     uint8_t rotate_cw;
 };

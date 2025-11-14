@@ -14,37 +14,37 @@ properties:
     description: Interrupt pin
   single-tap:
     type: int
-    default: 0
+    default: -1
     description: |
       Set the button triggered by a single-tap.
-      0 = disabled, 1 = BTN_0, 2 = BTN_1, 3 = BTN_2
+      -1 = disabled, 0 = BTN_0, 1 = BTN_1, 2 = BTN_2
   double-tap:
     type: int
-    default: 0
+    default: -1
     description: |
       Set the button triggered by double-tap.
-      0 = disabled, 1 = BTN_0, 2 = BTN_1, 3 = BTN_2
+      -1 = disabled, 0 = BTN_0, 1 = BTN_1, 2 = BTN_2
   triple-tap:
     type: int
-    default: 0
+    default: -1
     description: |
       Set the button triggered by triple-tap.
-      0 = disabled, 1 = BTN_0, 2 = BTN_1, 3 = BTN_2
+      -1 = disabled, 0 = BTN_0, 1 = BTN_1, 2 = BTN_2
   press-hold:
     type: int
-    default: 0
+    default: -1
     description: |
       Set the button triggered by press-hold.
-      0 = disabled, 1 = BTN_0, 2 = BTN_1, 3 = BTN_2
+      -1 = disabled, 0 = BTN_0, 1 = BTN_1, 2 = BTN_2
   scroll_layer:
     type: int
-    default: 0
+    default: -1
     description: |
       Set the active scroll layer.
-      0 = disabled, others = layer num
+      -1 = disabled, others = layer num
   scroll_start:
     type: int
-    default: 20
+    default: 25
     description: |
       Set resolution threshold to active scroll layer. (padding from edge)
       currently it has 1024x,1024y max resolution.
