@@ -10,7 +10,7 @@ The driver also implements touch gesture and scroll slider features:
 - Tap & Hold
 - Scroll slider (right-edge area)
   - Activates a specified layer while touching (`scroll_layer=1` is generally used)
-  - Releases to off the temp layer
+  - Releases to off the layer
 - Rotation correction for flexible physical placement
 
 ## 2. Device Tree Properties
@@ -19,13 +19,13 @@ The driver also implements touch gesture and scroll slider features:
 |----------|------|---------|-------------|
 | `reg` | int | required | I2C address of the device |
 | `irq-gpios` | phandle-array | required | Interrupt pin |
-| `single-tap` | int | 0 | Button triggered by single-tap (0=disabled, 1=BTN_0, 2=BTN_1, 3=BTN_2) |
-| `double-tap` | int | 0 | Button triggered by double-tap (0=disabled, 1=BTN_0, 2=BTN_1, 3=BTN_2) |
-| `triple-tap` | int | 0 | Button triggered by triple-tap (0=disabled, 1=BTN_0, 2=BTN_1, 3=BTN_2) |
-| `press-hold` | int | 0 | Button triggered by tap-and-hold (0=disabled, 1=BTN_0, 2=BTN_1, 3=BTN_2)|
-| `scroll_layer` | int | 0 | Layer activated while first touching scroll slider area (0=disabled, others=layer num) |
-| `scroll_start` | int | 20 | Threshold/padding from right edge to activate scroll slider (max resolution 1024x/1024y) |
-| `rotate_cw` | int | 0 | Rotation angle for scroll slider area **Clockwise** (0=0°, 1=90°, 2=180°, 3=270°) |
+| `single-tap` | int | -1 | Button triggered by single-tap (-1=disabled, 0=BTN_0, 1=BTN_1, 2=BTN_2, ...) |
+| `double-tap` | int | -1 | Button triggered by double-tap (-1=disabled, 0=BTN_0, 1=BTN_1, 2=BTN_2, ...) |
+| `triple-tap` | int | -1 | Button triggered by triple-tap (-1=disabled, 0=BTN_0, 1=BTN_1, 2=BTN_2, ...) |
+| `press-hold` | int | -1 | Button triggered by tap-and-hold (-1=disabled, 0=BTN_0, 1=BTN_1, 2=BTN_2. ...)|
+| `scroll_layer` | int | -1 | Layer activated while first touching scroll slider area (-1=disabled, others=layer num) |
+| `scroll_start` | uint | 25 | Threshold/padding from right edge to activate scroll slider (max resolution 1024x/1024y) |
+| `rotate_cw` | uint | 0 | Rotation angle for scroll slider area **Clockwise** (0=0°, 1=90°, 2=180°, 3=270°) |
 
 
 ## 3. Installation (GitHub Actions)
@@ -96,14 +96,14 @@ Add the IQS7211E node in your keyboard DTS overlay file (example of XIAO_BLE boa
         irq-gpios = <&gpio1 15 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
 
         /* Tap gesture settings */
-        single-tap = <1>;
-        double-tap = <1>;
-        triple-tap = <1>;
-        press-hold = <1>;
+        single-tap = <0>;
+        double-tap = <0>;
+        triple-tap = <0>;
+        press-hold = <0>;
 
         /* Scroll slider settings */
         scroll_layer = <1>;
-        scroll_start = <20>;
+        scroll_start = <27>;
         rotate_cw = <0>;
     };
 };

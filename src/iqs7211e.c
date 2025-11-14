@@ -766,7 +766,7 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
     if (num_fingers != 0 &&
         data->touch_count >= skip_count &&
         data->touch_count <= skip_count+1 &&
-        config->scroll_layer > 0 &&
+        config->scroll_layer >= 0 &&
         !data->is_scroll_layer_active)
     {
         switch (config->rotate_cw)
@@ -813,36 +813,36 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
         switch (gesture_event)
         {
         case IQS7211E_GESTURE_SINGLE_TAP:
-            if (config->single_tap > 0)
+            if (config->single_tap >= 0)
             {
-                input_report_key(data->dev, INPUT_BTN_0 + config->single_tap - 1, true, true, K_FOREVER);
-                input_report_key(data->dev, INPUT_BTN_0 + config->single_tap - 1, false, true, K_FOREVER);
+                input_report_key(data->dev, INPUT_BTN_0 + config->single_tap, true, true, K_FOREVER);
+                input_report_key(data->dev, INPUT_BTN_0 + config->single_tap, false, true, K_FOREVER);
             }
             break;
         case IQS7211E_GESTURE_DOUBLE_TAP:
-            if (config->double_tap > 0)
+            if (config->double_tap >= 0)
             {
                 for (int i = 0; i < 2; i++)
                 {
-                    input_report_key(data->dev, INPUT_BTN_0 + config->double_tap - 1, true, true, K_FOREVER);
-                    input_report_key(data->dev, INPUT_BTN_0 + config->double_tap - 1, false, true, K_FOREVER);
+                    input_report_key(data->dev, INPUT_BTN_0 + config->double_tap, true, true, K_FOREVER);
+                    input_report_key(data->dev, INPUT_BTN_0 + config->double_tap, false, true, K_FOREVER);
                 }
             }
             break;
         case IQS7211E_GESTURE_TRIPLE_TAP:
-            if (config->triple_tap > 0)
+            if (config->triple_tap >= 0)
             {
                 for (int i = 0; i < 3; i++)
                 {
-                    input_report_key(data->dev, INPUT_BTN_0 + config->triple_tap - 1, true, true, K_FOREVER);
-                    input_report_key(data->dev, INPUT_BTN_0 + config->triple_tap - 1, false, true, K_FOREVER);
+                    input_report_key(data->dev, INPUT_BTN_0 + config->triple_tap, true, true, K_FOREVER);
+                    input_report_key(data->dev, INPUT_BTN_0 + config->triple_tap, false, true, K_FOREVER);
                 }
             }
             break;
         case IQS7211E_GESTURE_PRESS_HOLD:
-            if (config->press_hold > 0 && data->start_tap == 0)
+            if (config->press_hold >= 0 && data->start_tap == 0)
             {
-                input_report_key(data->dev, INPUT_BTN_0 + config->press_hold - 1, true, true, K_FOREVER);
+                input_report_key(data->dev, INPUT_BTN_0 + config->press_hold, true, true, K_FOREVER);
                 data->start_tap = 1;
             }
             break;
@@ -852,7 +852,7 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
 
         if (num_fingers == 0 && data->start_tap == 1)
         {
-            input_report_key(data->dev, INPUT_BTN_0 + config->press_hold - 1, false, true, K_FOREVER);
+            input_report_key(data->dev, INPUT_BTN_0 + config->press_hold, false, true, K_FOREVER);
             data->start_tap = 0;
         }
     }
