@@ -761,10 +761,11 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
     LOG_INF("Fingers: %d, Gesture: %d", num_fingers, gesture_event);
     LOG_INF("Finger 1: X=%d, Y=%d", data->finger_1_x, data->finger_1_y);
     LOG_INF("Finger 2: X=%d, Y=%d", data->finger_2_x, data->finger_2_y);
-
+    uint8_t skip_count = 2;
     // Layer switcher
     if (num_fingers != 0 &&
-        data->touch_count < 2 &&
+        data->touch_count >= skip_count &&
+        data->touch_count <= skip_count+1 &&
         config->scroll_layer > 0 &&
         !data->is_scroll_layer_active)
     {
@@ -881,7 +882,7 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
     int16_t smooth_dx = (dx + data->finger_1_prev_dx) >> 1;
     int16_t smooth_dy = (dy + data->finger_1_prev_dy) >> 1;
 
-    if (num_fingers != 0 && data->touch_count >= 2)
+    if (num_fingers != 0 && data->touch_count >= skip_count)
     {
         input_report_rel(data->dev, INPUT_REL_X, smooth_dx, false, K_NO_WAIT);
         input_report_rel(data->dev, INPUT_REL_Y, smooth_dy, true, K_NO_WAIT); // sync=true
