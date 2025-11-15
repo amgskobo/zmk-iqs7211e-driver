@@ -13,6 +13,8 @@
 
 LOG_MODULE_REGISTER(iqs7211e, CONFIG_INPUT_LOG_LEVEL);
 
+static enum iqs7211e_power_mode iqs7211e_get_power_mode(const struct iqs7211e_data *data);
+static enum iqs7211e_gestures_event iqs7211e_get_touchpad_event(const struct iqs7211e_data *data);
 static bool iqs7211e_init_state(struct iqs7211e_data *data);
 static uint16_t iqs7211e_get_product_num(struct iqs7211e_data *data);
 static int iqs7211e_read_info_flags(const struct iqs7211e_data *data, uint8_t *info_flags);
@@ -23,19 +25,16 @@ static int iqs7211e_read_bytes(const struct i2c_dt_spec *i2c, uint8_t reg, uint8
 static int iqs7211e_write_bytes(const struct i2c_dt_spec *i2c, uint8_t reg, const uint8_t *data, size_t numBytes);
 static void iqs7211e_work_handler(struct k_work *work);
 static void iqs7211e_report_data(struct iqs7211e_data *data);
-static void set_interrupt(const struct device *dev, const bool en);
 static void iqs7211e_gpio_callback(const struct device *port, struct gpio_callback *cb, uint32_t pins);
 static int iqs7211e_write_defaults(struct iqs7211e_data *data);
 static int iqs7211e_sw_reset(struct iqs7211e_data *data);
 static int iqs7211e_run_ati(struct iqs7211e_data *data);
 static void iqs7211e_queue_value_updates(struct iqs7211e_data *data);
 static int iqs7211e_set_event_mode(struct iqs7211e_data *data);
-static enum iqs7211e_power_mode iqs7211e_get_power_mode(const struct iqs7211e_data *data);
-static enum iqs7211e_gestures_event iqs7211e_get_touchpad_event(const struct iqs7211e_data *data);
 static uint8_t iqs7211e_get_bit(uint8_t byte, uint8_t pos);
 static uint8_t iqs7211e_get_num_fingers(const struct iqs7211e_data *data);
-static int16_t calc_delta(uint16_t current, uint16_t prev);
-int iqs7211e_init(const struct device *dev);
+static void set_gpio_interrupt(const struct device *dev, const bool en);
+static int iqs7211e_init(const struct device *dev);
 
 static bool iqs7211e_init_state(struct iqs7211e_data *data)
 {
@@ -282,10 +281,6 @@ static void iqs7211e_queue_value_updates(struct iqs7211e_data *data)
 
     data->finger_2_x = (buf[1] << 8) | buf[0];
     data->finger_2_y = (buf[3] << 8) | buf[2];
-
-    LOG_DBG("Gestures: %02X %02X, InfoFlags: %02X %02X", data->gestures[0], data->gestures[1], data->info_flags[0], data->info_flags[1]);
-    LOG_DBG("F1_X: %d, F1_Y: %d", data->finger_1_x, data->finger_1_y);
-    LOG_DBG("F2_X: %d, F2_Y: %d", data->finger_2_x, data->finger_2_y);
 }
 
 static int iqs7211e_set_event_mode(struct iqs7211e_data *data)
@@ -749,7 +744,7 @@ static void iqs7211e_work_handler(struct k_work *work)
     {
         iqs7211e_report_data(data);
     }
-    set_interrupt(data->dev, true);
+    set_gpio_interrupt(data->dev, true);
 }
 
 static void iqs7211e_report_data(struct iqs7211e_data *data)
@@ -758,9 +753,9 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
     iqs7211e_queue_value_updates(data);
     uint8_t num_fingers = iqs7211e_get_num_fingers(data);
     uint8_t gesture_event = iqs7211e_get_touchpad_event(data);
-    LOG_INF("Fingers: %d, Gesture: %d", num_fingers, gesture_event);
-    LOG_INF("Finger 1: X=%d, Y=%d", data->finger_1_x, data->finger_1_y);
-    LOG_INF("Finger 2: X=%d, Y=%d", data->finger_2_x, data->finger_2_y);
+    LOG_DBG("Fingers: %d, Gesture: %d", num_fingers, gesture_event);
+    LOG_DBG("Finger 1: X=%d, Y=%d", data->finger_1_x, data->finger_1_y);
+    LOG_DBG("Finger 2: X=%d, Y=%d", data->finger_2_x, data->finger_2_y);
     uint8_t skip_count = 2;
     // Layer switcher
     if (num_fingers != 0 &&
@@ -875,8 +870,8 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
         data->finger_1_prev_dy = 0;
     }
 
-    int16_t dx = calc_delta(data->finger_1_x, data->finger_1_prev_x);
-    int16_t dy = calc_delta(data->finger_1_y, data->finger_1_prev_y);
+    int16_t dx = data->finger_1_x - data->finger_1_prev_x;
+    int16_t dy = data->finger_1_y - data->finger_1_prev_y;
 
     // smooth_dx = (dx + data->finger_1_prev_dx) / 2;
     int16_t smooth_dx = (dx + data->finger_1_prev_dx) >> 1;
@@ -899,17 +894,7 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
     }
 }
 
-static int16_t calc_delta(uint16_t current, uint16_t prev)
-{
-    int delta = (int)current - (int)prev;
-    if (delta > 32767)
-        delta -= 65536;
-    else if (delta < -32768)
-        delta += 65536;
-    return (int16_t)delta;
-}
-
-static void set_interrupt(const struct device *dev, const bool en)
+static void set_gpio_interrupt(const struct device *dev, const bool en)
 {
     const struct iqs7211e_config *config = dev->config;
     int ret = gpio_pin_interrupt_configure_dt(&config->irq_gpio,
@@ -923,11 +908,11 @@ static void set_interrupt(const struct device *dev, const bool en)
 static void iqs7211e_gpio_callback(const struct device *port, struct gpio_callback *cb, uint32_t pins)
 {
     struct iqs7211e_data *data = CONTAINER_OF(cb, struct iqs7211e_data, gpio_cb);
-    set_interrupt(data->dev, false);
+    set_gpio_interrupt(data->dev, false);
     k_work_submit(&data->work);
 }
 
-int iqs7211e_init(const struct device *dev)
+static int iqs7211e_init(const struct device *dev)
 {
     const struct iqs7211e_config *config = dev->config;
     struct iqs7211e_data *data = dev->data;
@@ -961,10 +946,12 @@ int iqs7211e_init(const struct device *dev)
     }
     data->init_state = IQS7211E_INIT_VERIFY_PRODUCT;
     data->touch_count = 0;
+    data->start_tap = 0;
+    data->is_scroll_layer_active = false;
     data->dev = dev;
 
     k_work_init(&data->work, iqs7211e_work_handler);
-    set_interrupt(data->dev, true);
+    set_gpio_interrupt(data->dev, true);
 
     LOG_INF("IQS7211E driver initialized successfully");
     return 0;

@@ -17,8 +17,8 @@ The driver also implements touch gesture and scroll slider features:
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `reg` | int | required | I2C address of the device |
-| `irq-gpios` | phandle-array | required | Interrupt pin |
+| `reg` | byte  | 0x56 | I2C address of the device (required)  |
+| `irq-gpios` | phandle-array |  | Interrupt pin (required)|
 | `single-tap` | int | -1 | Button triggered by single-tap (-1=disabled, 0=BTN_0, 1=BTN_1, 2=BTN_2, ...) |
 | `double-tap` | int | -1 | Button triggered by double-tap (-1=disabled, 0=BTN_0, 1=BTN_1, 2=BTN_2, ...) |
 | `triple-tap` | int | -1 | Button triggered by triple-tap (-1=disabled, 0=BTN_0, 1=BTN_1, 2=BTN_2, ...) |
