@@ -760,46 +760,18 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
     // Layer switcher
     if (num_fingers != 0 &&
         data->touch_count >= skip_count &&
-        data->touch_count <= skip_count+1 &&
+        data->touch_count <= skip_count + 1 &&
         config->scroll_layer >= 0 &&
         !data->is_scroll_layer_active)
     {
-        switch (config->rotate_cw)
+        if ((config->rotate_cw == 0 && data->finger_1_x > RESOLUTION_X - config->scroll_start) ||
+            (config->rotate_cw == 1 && data->finger_1_y < config->scroll_start) ||
+            (config->rotate_cw == 2 && data->finger_1_x < config->scroll_start) ||
+            (config->rotate_cw == 3 && data->finger_1_y > RESOLUTION_Y - config->scroll_start))
         {
-        case 0:
-            if (data->finger_1_x > RESOLUTION_X - config->scroll_start)
-            {
-                zmk_keymap_layer_activate(config->scroll_layer);
-                data->is_scroll_layer_active = true;
-                LOG_INF("Scroll layer activated");
-            }
-            break;
-        case 1: // 90 degree (cw)
-            if (data->finger_1_y < config->scroll_start)
-            {
-                zmk_keymap_layer_activate(config->scroll_layer);
-                data->is_scroll_layer_active = true;
-                LOG_INF("Scroll layer activated");
-            }
-            break;
-        case 2: // 180 degree
-            if (data->finger_1_x < config->scroll_start)
-            {
-                zmk_keymap_layer_activate(config->scroll_layer);
-                data->is_scroll_layer_active = true;
-                LOG_INF("Scroll layer activated");
-            }
-            break;
-        case 3: // 270 degree
-            if (data->finger_1_y > RESOLUTION_Y - config->scroll_start)
-            {
-                zmk_keymap_layer_activate(config->scroll_layer);
-                data->is_scroll_layer_active = true;
-                LOG_INF("Scroll layer activated");
-            }
-            break;
-        default:
-            break;
+            zmk_keymap_layer_activate(config->scroll_layer, false);
+            data->is_scroll_layer_active = true;
+            LOG_INF("Scroll layer activated");
         }
     }
 
@@ -854,7 +826,7 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
 
     if (num_fingers == 0 && data->is_scroll_layer_active)
     {
-        zmk_keymap_layer_deactivate(config->scroll_layer);
+        zmk_keymap_layer_deactivate(config->scroll_layer, false);
         data->is_scroll_layer_active = false;
         LOG_INF("Scroll layer deactivated");
     }
