@@ -11,7 +11,7 @@
 #include "iqs7211e_init.h"
 #include "iqs7211e.h"
 
-LOG_MODULE_REGISTER(iqs7211e, CONFIG_INPUT_LOG_LEVEL);
+LOG_MODULE_REGISTER(iqs7211e, CONFIG_ZMK_LOG_LEVEL);
 
 static enum iqs7211e_power_mode iqs7211e_get_power_mode(const struct iqs7211e_data *data);
 static enum iqs7211e_gestures_event iqs7211e_get_touchpad_event(const struct iqs7211e_data *data);
