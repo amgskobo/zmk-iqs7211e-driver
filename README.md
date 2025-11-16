@@ -1,5 +1,5 @@
 # zmk-iqs7211e-driver
-<img src=/img/iqs7211e_trackpad01.png width="30%" />
+<img src=/img/iqs7211e_trackpad01.png width="500px" />
 
 ## 1. Overview
 This repository provides a driver for the **"Trackpad01"** (Azoteq IQS7211E touch/proximity sensor chip) for ZMK (Zephyr Mechanical Keyboard firmware) 3.5.
@@ -200,11 +200,11 @@ The GitHub Actions workflow automatically builds the firmware and generates arti
 ## 4. HW and Dimensions
 
 ### 4.1 Trackpad01 Front view (HASL)
-<img src=/img/iqs7211e_trackpad01_front.png width="50%" />
+<img src=/img/iqs7211e_trackpad01_front.png width="500px" />
 
 ### 4.2 Trackpad01 Back view (HASL)
 
-<img src=/img/iqs7211e_trackpad01_back.png width="50%" />
+<img src=/img/iqs7211e_trackpad01_back.png width="500px" />
 
 ### 4.3 Pin Assignment (all +3V3 logic) 
 | PIN | value | info |
