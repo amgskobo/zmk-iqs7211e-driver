@@ -33,7 +33,7 @@ static void iqs7211e_queue_value_updates(struct iqs7211e_data *data);
 static int iqs7211e_set_event_mode(struct iqs7211e_data *data);
 static uint8_t iqs7211e_get_bit(uint8_t byte, uint8_t pos);
 static uint8_t iqs7211e_get_num_fingers(const struct iqs7211e_data *data);
-static void set_gpio_interrupt(const struct device *dev, const bool en);
+static int set_gpio_interrupt(const struct device *dev, const bool en);
 static int iqs7211e_init(const struct device *dev);
 
 static bool iqs7211e_init_state(struct iqs7211e_data *data)
@@ -827,7 +827,7 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
     }
 }
 
-static void set_gpio_interrupt(const struct device *dev, const bool en)
+static int set_gpio_interrupt(const struct device *dev, const bool en)
 {
     const struct iqs7211e_config *config = dev->config;
     int ret = gpio_pin_interrupt_configure_dt(&config->irq_gpio,
@@ -835,7 +835,9 @@ static void set_gpio_interrupt(const struct device *dev, const bool en)
     if (ret < 0)
     {
         LOG_ERR("Failed to set interrupt");
+        return ret;
     }
+    return 0;
 }
 
 static void iqs7211e_gpio_callback(const struct device *port, struct gpio_callback *cb, uint32_t pins)
@@ -901,7 +903,6 @@ static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action ac
         data->touch_count = 0;
         data->start_tap = 0;
         data->is_scroll_layer_active = false;
-        data->dev = dev;
         return set_gpio_interrupt(dev, true);
     default:
         return -ENOTSUP;
