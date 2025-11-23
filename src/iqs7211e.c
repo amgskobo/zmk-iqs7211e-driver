@@ -8,12 +8,12 @@
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/kernel.h>
 #include <zmk/keymap.h>
+#include <zephyr/pm/device.h>
 #include "iqs7211e_init.h"
 #include "iqs7211e.h"
 
 LOG_MODULE_REGISTER(iqs7211e, CONFIG_ZMK_LOG_LEVEL);
 
-static enum iqs7211e_power_mode iqs7211e_get_power_mode(const struct iqs7211e_data *data);
 static enum iqs7211e_gestures_event iqs7211e_get_touchpad_event(const struct iqs7211e_data *data);
 static bool iqs7211e_init_state(struct iqs7211e_data *data);
 static uint16_t iqs7211e_get_product_num(struct iqs7211e_data *data);
@@ -307,45 +307,6 @@ static int iqs7211e_set_event_mode(struct iqs7211e_data *data)
 
     LOG_INF("Event mode enabled");
     return 0;
-}
-
-static enum iqs7211e_power_mode iqs7211e_get_power_mode(const struct iqs7211e_data *data)
-{
-    uint8_t info_flags[2];
-    int ret = iqs7211e_read_info_flags(data, info_flags);
-    if (ret != 0)
-    {
-        return IQS7211E_POWER_UNKNOWN;
-    }
-
-    uint8_t buffer = iqs7211e_get_bit(info_flags[0], IQS7211E_CHARGING_MODE_BIT_0);
-    buffer |= iqs7211e_get_bit(info_flags[0], IQS7211E_CHARGING_MODE_BIT_1) << 1;
-    buffer |= iqs7211e_get_bit(info_flags[0], IQS7211E_CHARGING_MODE_BIT_2) << 2;
-
-    if (buffer == IQS7211E_ACTIVE_BITS)
-    {
-        return IQS7211E_ACTIVE;
-    }
-    else if (buffer == IQS7211E_IDLE_TOUCH_BITS)
-    {
-        return IQS7211E_IDLE_TOUCH;
-    }
-    else if (buffer == IQS7211E_IDLE_BITS)
-    {
-        return IQS7211E_IDLE;
-    }
-    else if (buffer == IQS7211E_LP1_BITS)
-    {
-        return IQS7211E_LP1;
-    }
-    else if (buffer == IQS7211E_LP2_BITS)
-    {
-        return IQS7211E_LP2;
-    }
-    else
-    {
-        return IQS7211E_POWER_UNKNOWN;
-    }
 }
 
 static enum iqs7211e_gestures_event iqs7211e_get_touchpad_event(const struct iqs7211e_data *data)
@@ -929,6 +890,25 @@ static int iqs7211e_init(const struct device *dev)
     return 0;
 }
 
+#ifdef CONFIG_PM_DEVICE
+static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action action) {
+    struct iqs7211e_data *data = dev->data;
+    switch (action) {
+    case PM_DEVICE_ACTION_SUSPEND:
+        return set_gpio_interrupt(dev, false);
+    case PM_DEVICE_ACTION_RESUME:
+        data->init_state = IQS7211E_INIT_VERIFY_PRODUCT;
+        data->touch_count = 0;
+        data->start_tap = 0;
+        data->is_scroll_layer_active = false;
+        data->dev = dev;
+        return set_gpio_interrupt(dev, true);
+    default:
+        return -ENOTSUP;
+    }
+}
+#endif // #ifdef CONFIG_PM_DEVICE
+
 #define IQS7211E_DEFINE(inst)                                           \
     static struct iqs7211e_data iqs7211e_data_##inst;                   \
     static const struct iqs7211e_config iqs7211e_config_##inst = {      \
@@ -942,10 +922,10 @@ static int iqs7211e_init(const struct device *dev)
         .scroll_start = DT_PROP_OR(DT_DRV_INST(inst), scroll_start, 0), \
         .rotate_cw = DT_PROP_OR(DT_DRV_INST(inst), rotate_cw, 0),       \
     };                                                                  \
-                                                                        \
+    PM_DEVICE_DT_INST_DEFINE(inst, iqs7211e_pm_action);                 \
     DEVICE_DT_INST_DEFINE(inst,                                         \
                           &iqs7211e_init,                               \
-                          NULL,                                         \
+                          PM_DEVICE_DT_INST_GET(inst),                  \
                           &iqs7211e_data_##inst,                        \
                           &iqs7211e_config_##inst,                      \
                           POST_KERNEL,                                  \
