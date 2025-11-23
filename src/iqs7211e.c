@@ -851,8 +851,8 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
 
     if (num_fingers != 0 && data->touch_count >= skip_count)
     {
-        input_report_rel(data->dev, INPUT_REL_X, smooth_dx, false, K_NO_WAIT);
-        input_report_rel(data->dev, INPUT_REL_Y, smooth_dy, true, K_NO_WAIT); // sync=true
+        input_report_rel(data->dev, INPUT_REL_X, smooth_dx, false, K_FOREVER);
+        input_report_rel(data->dev, INPUT_REL_Y, smooth_dy, true, K_FOREVER); // sync=true
     }
     data->finger_1_prev_x = data->finger_1_x;
     data->finger_1_prev_y = data->finger_1_y;
