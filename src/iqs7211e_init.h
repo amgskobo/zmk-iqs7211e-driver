@@ -34,7 +34,7 @@
 
 /* Report Rates and Timing */
 /* Memory Map Position 0x28 - 0x32 */
-#define ACTIVE_MODE_REPORT_RATE_0                0x0A
+#define ACTIVE_MODE_REPORT_RATE_0                0x0F
 #define ACTIVE_MODE_REPORT_RATE_1                0x00
 #define IDLE_TOUCH_MODE_REPORT_RATE_0            0x32
 #define IDLE_TOUCH_MODE_REPORT_RATE_1            0x00
@@ -75,7 +75,7 @@
 
 /* Thresholds and Debounce Settings */
 /* Memory Map Position 0x38 - 0x3A */
-#define TRACKPAD_TOUCH_SET_THRESHOLD             0x14
+#define TRACKPAD_TOUCH_SET_THRESHOLD             0x16
 #define TRACKPAD_TOUCH_CLEAR_THRESHOLD           0x0E
 #define ALP_THRESHOLD_0                          0x08
 #define ALP_THRESHOLD_1                          0x00
