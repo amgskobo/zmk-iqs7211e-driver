@@ -127,7 +127,7 @@ static bool iqs7211e_init_state(struct iqs7211e_data *data)
     default:
         break;
     }
-    LOG_DBG("Transition to state: %d", data->init_state);
+    // LOG_DBG("Transition to state: %d", data->init_state);
     return false;
 }
 
@@ -214,7 +214,7 @@ static int iqs7211e_acknowledge_reset(struct iqs7211e_data *data)
         LOG_ERR("Failed to write ACK reset to system control register");
         return ret;
     }
-    LOG_INF("IQS7211E reset acknowledged (ACK_RESET_BIT set)");
+    LOG_DBG("IQS7211E reset acknowledged (ACK_RESET_BIT set)");
     return 0;
 }
 
