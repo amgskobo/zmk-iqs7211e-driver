@@ -38,6 +38,7 @@ static int iqs7211e_init(const struct device *dev);
 
 static bool iqs7211e_init_state(struct iqs7211e_data *data)
 {
+    int ret = 0;
     switch (data->init_state)
     {
     case IQS7211E_INIT_VERIFY_PRODUCT:
@@ -68,7 +69,7 @@ static bool iqs7211e_init_state(struct iqs7211e_data *data)
     case IQS7211E_INIT_CHIP_RESET:
         if (!data->reset_called)
         {
-            int ret = iqs7211e_sw_reset(data);
+            ret = iqs7211e_sw_reset(data);
             if (ret < 0)
             {
                 break;
@@ -79,21 +80,21 @@ static bool iqs7211e_init_state(struct iqs7211e_data *data)
         break;
 
     case IQS7211E_INIT_UPDATE_SETTINGS:
-        int ret = iqs7211e_write_defaults(data);
+        ret = iqs7211e_write_defaults(data);
         if (ret < 0)
             break;
         data->init_state = IQS7211E_INIT_ACK_RESET;
         break;
 
     case IQS7211E_INIT_ACK_RESET:
-        int ret = iqs7211e_acknowledge_reset(data);
+        ret = iqs7211e_acknowledge_reset(data);
         if (ret < 0)
             break;
         data->init_state = IQS7211E_INIT_ATI;
         break;
 
     case IQS7211E_INIT_ATI:
-        int ret = iqs7211e_run_ati(data);
+        ret = iqs7211e_run_ati(data);
         if (ret < 0)
             break;
         data->init_state = IQS7211E_INIT_WAIT_FOR_ATI;
@@ -107,14 +108,14 @@ static bool iqs7211e_init_state(struct iqs7211e_data *data)
         break;
 
     case IQS7211E_INIT_READ_DATA:
-        int ret = iqs7211e_queue_value_updates(data);
+        ret = iqs7211e_queue_value_updates(data);
         if (ret < 0)
             break;
         data->init_state = IQS7211E_INIT_ACTIVATE_EVENT_MODE;
         break;
 
     case IQS7211E_INIT_ACTIVATE_EVENT_MODE:
-        int ret = iqs7211e_set_event_mode(data);
+        ret = iqs7211e_set_event_mode(data);
         if (ret < 0)
             break;
         data->init_state = IQS7211E_INIT_DONE;
