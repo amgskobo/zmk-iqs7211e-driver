@@ -29,7 +29,7 @@ static void iqs7211e_gpio_callback(const struct device *port, struct gpio_callba
 static int iqs7211e_write_defaults(struct iqs7211e_data *data);
 static int iqs7211e_sw_reset(struct iqs7211e_data *data);
 static int iqs7211e_run_ati(struct iqs7211e_data *data);
-static void iqs7211e_queue_value_updates(struct iqs7211e_data *data);
+static int iqs7211e_queue_value_updates(struct iqs7211e_data *data);
 static int iqs7211e_set_event_mode(struct iqs7211e_data *data);
 static uint8_t iqs7211e_get_bit(uint8_t byte, uint8_t pos);
 static uint8_t iqs7211e_get_num_fingers(const struct iqs7211e_data *data);
@@ -48,13 +48,12 @@ static bool iqs7211e_init_state(struct iqs7211e_data *data)
         }
         else
         {
-            LOG_INF("prod_num != IQS7211E_PRODUCT_NUM, init_state = IQS7211E_INIT_NONE");
+            LOG_ERR("prod_num != IQS7211E_PRODUCT_NUM, init_state = IQS7211E_INIT_NONE");
             data->init_state = IQS7211E_INIT_NONE;
         }
         break;
 
     case IQS7211E_INIT_READ_RESET:
-
         if (iqs7211e_check_reset(data))
         {
             data->init_state = IQS7211E_INIT_UPDATE_SETTINGS;
@@ -70,7 +69,7 @@ static bool iqs7211e_init_state(struct iqs7211e_data *data)
         if (!data->reset_called)
         {
             int ret = iqs7211e_sw_reset(data);
-            if (ret != 0)
+            if (ret < 0)
             {
                 break;
             }
@@ -80,18 +79,23 @@ static bool iqs7211e_init_state(struct iqs7211e_data *data)
         break;
 
     case IQS7211E_INIT_UPDATE_SETTINGS:
-
-        iqs7211e_write_defaults(data);
+        int ret = iqs7211e_write_defaults(data);
+        if (ret < 0)
+            break;
         data->init_state = IQS7211E_INIT_ACK_RESET;
         break;
 
     case IQS7211E_INIT_ACK_RESET:
-        iqs7211e_acknowledge_reset(data);
+        int ret = iqs7211e_acknowledge_reset(data);
+        if (ret < 0)
+            break;
         data->init_state = IQS7211E_INIT_ATI;
         break;
 
     case IQS7211E_INIT_ATI:
-        iqs7211e_run_ati(data);
+        int ret = iqs7211e_run_ati(data);
+        if (ret < 0)
+            break;
         data->init_state = IQS7211E_INIT_WAIT_FOR_ATI;
         break;
 
@@ -103,16 +107,20 @@ static bool iqs7211e_init_state(struct iqs7211e_data *data)
         break;
 
     case IQS7211E_INIT_READ_DATA:
-        iqs7211e_queue_value_updates(data);
+        int ret = iqs7211e_queue_value_updates(data);
+        if (ret < 0)
+            break;
         data->init_state = IQS7211E_INIT_ACTIVATE_EVENT_MODE;
         break;
 
     case IQS7211E_INIT_ACTIVATE_EVENT_MODE:
-        iqs7211e_set_event_mode(data);
+        int ret = iqs7211e_set_event_mode(data);
+        if (ret < 0)
+            break;
         data->init_state = IQS7211E_INIT_DONE;
+        LOG_DBG("IQS7211E initialization successful");
         break;
     case IQS7211E_INIT_DONE:
-        LOG_INF("IQS7211E initialization successful");
         return true;
 
     default:
@@ -127,10 +135,10 @@ static uint16_t iqs7211e_get_product_num(struct iqs7211e_data *data)
     const struct iqs7211e_config *config = data->dev->config;
     uint8_t buf[2];
     int ret = iqs7211e_read_bytes(&config->i2c, IQS7211E_MM_PROD_NUM, buf, 2);
-    if (ret != 0)
+    if (ret < 0)
     {
         LOG_ERR("Failed to read product number");
-        return 0;
+        return ret;
     }
     return ((uint16_t)buf[1] << 8) | buf[0];
 }
@@ -139,7 +147,7 @@ static int iqs7211e_read_info_flags(const struct iqs7211e_data *data, uint8_t *i
 {
     const struct iqs7211e_config *config = data->dev->config;
     int ret = iqs7211e_read_bytes(&config->i2c, IQS7211E_MM_INFO_FLAGS, info_flags, 2);
-    if (ret)
+    if (ret < 0)
     {
         LOG_ERR("Failed to read INFO_FLAGS register");
         return ret;
@@ -151,9 +159,8 @@ static bool iqs7211e_check_reset(struct iqs7211e_data *data)
 {
     uint8_t info_flags[2];
     int ret;
-
     ret = iqs7211e_read_info_flags(data, info_flags);
-    if (ret)
+    if (ret < 0)
     {
         return false;
     }
@@ -167,7 +174,7 @@ static int iqs7211e_sw_reset(struct iqs7211e_data *data)
     uint8_t command[2];
     int ret;
     ret = iqs7211e_read_bytes(&config->i2c, IQS7211E_MM_SYS_CONTROL, command, 2);
-    if (ret)
+    if (ret < 0)
     {
         LOG_ERR("Failed to read system control register for reset");
         return ret;
@@ -176,12 +183,12 @@ static int iqs7211e_sw_reset(struct iqs7211e_data *data)
     command[1] |= (1 << IQS7211E_SW_RESET_BIT);
 
     ret = iqs7211e_write_bytes(&config->i2c, IQS7211E_MM_SYS_CONTROL, command, 2);
-    if (ret)
+    if (ret < 0)
     {
         LOG_ERR("Failed to write system control register for reset");
         return ret;
     }
-    LOG_INF("IQS7211E software reset issued");
+    LOG_DBG("IQS7211E software reset issued");
     return 0;
 }
 
@@ -192,7 +199,7 @@ static int iqs7211e_acknowledge_reset(struct iqs7211e_data *data)
     int ret;
 
     ret = iqs7211e_read_bytes(&config->i2c, IQS7211E_MM_SYS_CONTROL, command, 2);
-    if (ret)
+    if (ret < 0)
     {
         LOG_ERR("Failed to read system control register during ACK reset");
         return ret;
@@ -201,7 +208,7 @@ static int iqs7211e_acknowledge_reset(struct iqs7211e_data *data)
     command[0] |= (1 << IQS7211E_ACK_RESET_BIT);
 
     ret = iqs7211e_write_bytes(&config->i2c, IQS7211E_MM_SYS_CONTROL, command, 2);
-    if (ret)
+    if (ret < 0)
     {
         LOG_ERR("Failed to write ACK reset to system control register");
         return ret;
@@ -215,9 +222,8 @@ int iqs7211e_run_ati(struct iqs7211e_data *data)
     const struct iqs7211e_config *config = data->dev->config;
     uint8_t command[2];
     int ret;
-
     ret = iqs7211e_read_bytes(&config->i2c, IQS7211E_MM_SYS_CONTROL, command, 2);
-    if (ret)
+    if (ret < 0)
     {
         LOG_ERR("Failed to read command reg for ATI");
         return ret;
@@ -226,13 +232,13 @@ int iqs7211e_run_ati(struct iqs7211e_data *data)
     command[0] |= (1 << IQS7211E_TP_RE_ATI_BIT);
 
     ret = iqs7211e_write_bytes(&config->i2c, IQS7211E_MM_SYS_CONTROL, command, 2);
-    if (ret)
+    if (ret < 0)
     {
         LOG_ERR("Failed to write REATI command");
         return ret;
     }
 
-    LOG_INF("IQS7211E ATI triggered");
+    LOG_DBG("IQS7211E ATI triggered");
     return 0;
 }
 
@@ -240,27 +246,24 @@ static bool iqs7211e_read_ati_active(struct iqs7211e_data *data)
 {
     uint8_t info_flags[2];
     int ret = iqs7211e_read_info_flags(data, info_flags);
-
-    if (ret != 0)
+    if (ret < 0)
     {
         LOG_WRN("Failed to read info flags, assuming ATI still running");
         return true;
     }
-
     return !(info_flags[0] & (1 << IQS7211E_RE_ATI_OCCURRED_BIT));
 }
 
-static void iqs7211e_queue_value_updates(struct iqs7211e_data *data)
+static int iqs7211e_queue_value_updates(struct iqs7211e_data *data)
 {
     const struct iqs7211e_config *config = data->dev->config;
     uint8_t buf[8];
     int ret;
-
     ret = iqs7211e_read_bytes(&config->i2c, IQS7211E_MM_GESTURES, buf, 8);
-    if (ret != 0)
+    if (ret < 0)
     {
         LOG_ERR("Failed to read GESTURES and FINGER_1 data");
-        return;
+        return ret;
     }
 
     data->gestures[0] = buf[0];
@@ -273,14 +276,14 @@ static void iqs7211e_queue_value_updates(struct iqs7211e_data *data)
     data->finger_1_y = (buf[7] << 8) | buf[6];
 
     ret = iqs7211e_read_bytes(&config->i2c, IQS7211E_MM_FINGER_2_X, buf, 4);
-    if (ret != 0)
+    if (ret < 0)
     {
         LOG_ERR("Failed to read FINGER_2 data");
-        return;
+        return ret;
     }
-
     data->finger_2_x = (buf[1] << 8) | buf[0];
     data->finger_2_y = (buf[3] << 8) | buf[2];
+    return 0;
 }
 
 static int iqs7211e_set_event_mode(struct iqs7211e_data *data)
@@ -288,9 +291,8 @@ static int iqs7211e_set_event_mode(struct iqs7211e_data *data)
     const struct iqs7211e_config *config = data->dev->config;
     uint8_t command[2];
     int ret;
-
     ret = iqs7211e_read_bytes(&config->i2c, IQS7211E_MM_CONFIG_SETTINGS, command, sizeof(command));
-    if (ret)
+    if (ret < 0)
     {
         LOG_ERR("Failed to read system control register");
         return ret;
@@ -299,13 +301,13 @@ static int iqs7211e_set_event_mode(struct iqs7211e_data *data)
     command[1] |= (1 << IQS7211E_EVENT_MODE_BIT);
 
     ret = iqs7211e_write_bytes(&config->i2c, IQS7211E_MM_CONFIG_SETTINGS, command, sizeof(command));
-    if (ret)
+    if (ret < 0)
     {
         LOG_ERR("Failed to write system control register");
         return ret;
     }
 
-    LOG_INF("Event mode enabled");
+    LOG_DBG("Event mode enabled");
     return 0;
 }
 
@@ -378,11 +380,10 @@ static uint8_t iqs7211e_get_num_fingers(const struct iqs7211e_data *data)
 {
     uint8_t info_flags[2];
     int ret = iqs7211e_read_info_flags(data, info_flags);
-    if (ret != 0)
+    if (ret < 0)
     {
         return 0xFF; // 255 invalid number
     }
-
     uint8_t byte = info_flags[1];
     uint8_t num = iqs7211e_get_bit(byte, IQS7211E_NUM_FINGERS_BIT_0) |
                   (iqs7211e_get_bit(byte, IQS7211E_NUM_FINGERS_BIT_1) << 1);
@@ -401,9 +402,9 @@ static int iqs7211e_write_defaults(struct iqs7211e_data *data)
     buf[2] = ALP_COMPENSATION_B_0;
     buf[3] = ALP_COMPENSATION_B_1;
     ret = iqs7211e_write_bytes(i2c, 0x1F, buf, 4);
-    if (ret)
+    if (ret < 0)
         return ret;
-    LOG_INF("1. ALP Compensation written");
+    LOG_DBG("1. ALP Compensation written");
 
     /* 2. ATI Settings (0x21 - 0x27) */
     buf[0] = TP_ATI_MULTIPLIERS_DIVIDERS_0;
@@ -421,9 +422,9 @@ static int iqs7211e_write_defaults(struct iqs7211e_data *data)
     buf[12] = ALP_ATI_TARGET_0;
     buf[13] = ALP_ATI_TARGET_1;
     ret = iqs7211e_write_bytes(i2c, 0x21, buf, 14);
-    if (ret)
+    if (ret < 0)
         return ret;
-    LOG_INF("2. ATI Settings written");
+    LOG_DBG("2. ATI Settings written");
 
     /* 3. Report Rates and Timings (0x28 - 0x32) */
     buf[0] = ACTIVE_MODE_REPORT_RATE_0;
@@ -449,9 +450,9 @@ static int iqs7211e_write_defaults(struct iqs7211e_data *data)
     buf[20] = I2C_TIMEOUT_0;
     buf[21] = I2C_TIMEOUT_1;
     ret = iqs7211e_write_bytes(i2c, 0x28, buf, 22);
-    if (ret)
+    if (ret < 0)
         return ret;
-    LOG_INF("3. Report rates and timings written");
+    LOG_DBG("3. Report rates and timings written");
 
     /* 4. System Control Settings (0x33 - 0x35) */
     buf[0] = SYSTEM_CONTROL_0;
@@ -461,9 +462,9 @@ static int iqs7211e_write_defaults(struct iqs7211e_data *data)
     buf[4] = OTHER_SETTINGS_0;
     buf[5] = OTHER_SETTINGS_1;
     ret = iqs7211e_write_bytes(i2c, 0x33, buf, 6);
-    if (ret)
+    if (ret < 0)
         return ret;
-    LOG_INF("4. System control settings written");
+    LOG_DBG("4. System control settings written");
 
     /* 5. ALP Setup (0x36 - 0x37) */
     buf[0] = ALP_SETUP_0;
@@ -471,9 +472,9 @@ static int iqs7211e_write_defaults(struct iqs7211e_data *data)
     buf[2] = ALP_TX_ENABLE_0;
     buf[3] = ALP_TX_ENABLE_1;
     ret = iqs7211e_write_bytes(i2c, 0x36, buf, 4);
-    if (ret)
+    if (ret < 0)
         return ret;
-    LOG_INF("5. ALP Setup written");
+    LOG_DBG("5. ALP Setup written");
 
     /* 6. Threshold Settings (0x38 - 0x3A) */
     buf[0] = TRACKPAD_TOUCH_SET_THRESHOLD;
@@ -483,9 +484,9 @@ static int iqs7211e_write_defaults(struct iqs7211e_data *data)
     buf[4] = ALP_SET_DEBOUNCE;
     buf[5] = ALP_CLEAR_DEBOUNCE;
     ret = iqs7211e_write_bytes(i2c, 0x38, buf, 6);
-    if (ret)
+    if (ret < 0)
         return ret;
-    LOG_INF("6. Threshold settings written");
+    LOG_DBG("6. Threshold settings written");
 
     /* 7. Filter Betas (0x3B - 0x3C) */
     buf[0] = ALP_COUNT_BETA_LP1;
@@ -493,9 +494,9 @@ static int iqs7211e_write_defaults(struct iqs7211e_data *data)
     buf[2] = ALP_COUNT_BETA_LP2;
     buf[3] = ALP_LTA_BETA_LP2;
     ret = iqs7211e_write_bytes(i2c, 0x3B, buf, 4);
-    if (ret)
+    if (ret < 0)
         return ret;
-    LOG_INF("7. Filter Betas written");
+    LOG_DBG("7. Filter Betas written");
 
     /* 8. Hardware Settings (0x3D - 0x40) */
     buf[0] = TP_CONVERSION_FREQUENCY_UP_PASS_LENGTH;
@@ -507,9 +508,9 @@ static int iqs7211e_write_defaults(struct iqs7211e_data *data)
     buf[6] = ALP_HARDWARE_SETTINGS_0;
     buf[7] = ALP_HARDWARE_SETTINGS_1;
     ret = iqs7211e_write_bytes(i2c, 0x3D, buf, 8);
-    if (ret)
+    if (ret < 0)
         return ret;
-    LOG_INF("8. Hardware settings written");
+    LOG_DBG("8. Hardware settings written");
 
     /* 9. TP Setup (0x41 - 0x49) */
     buf[0] = TRACKPAD_SETTINGS_0_0;
@@ -531,17 +532,17 @@ static int iqs7211e_write_defaults(struct iqs7211e_data *data)
     buf[16] = X_TRIM_VALUE;
     buf[17] = Y_TRIM_VALUE;
     ret = iqs7211e_write_bytes(i2c, 0x41, buf, 18);
-    if (ret)
+    if (ret < 0)
         return ret;
-    LOG_INF("9. TP Settings written");
+    LOG_DBG("9. TP Settings written");
 
     /* 10. Version Numbers (0x4A - 0x4A) */
     buf[0] = MINOR_VERSION;
     buf[1] = MAJOR_VERSION;
     ret = iqs7211e_write_bytes(i2c, 0x4A, buf, 2);
-    if (ret)
+    if (ret < 0)
         return ret;
-    LOG_INF("10. Version numbers written");
+    LOG_DBG("10. Version numbers written");
 
     /* 11. Gesture Settings (0x4B - 0x55) */
     buf[0] = GESTURE_ENABLE_0;
@@ -567,9 +568,9 @@ static int iqs7211e_write_defaults(struct iqs7211e_data *data)
     buf[20] = SWIPE_ANGLE;
     buf[21] = PALM_THRESHOLD;
     ret = iqs7211e_write_bytes(i2c, 0x4B, buf, 22);
-    if (ret)
+    if (ret < 0)
         return ret;
-    LOG_INF("11. Gesture settings written");
+    LOG_DBG("11. Gesture settings written");
 
     /* 12. RxTx Mapping (0x56 - 0x5C) */
     buf[0] = RX_TX_MAP_0;
@@ -587,9 +588,9 @@ static int iqs7211e_write_defaults(struct iqs7211e_data *data)
     buf[12] = RX_TX_MAP_12;
     buf[13] = RX_TX_MAP_FILLER;
     ret = iqs7211e_write_bytes(i2c, 0x56, buf, 14);
-    if (ret)
+    if (ret < 0)
         return ret;
-    LOG_INF("12. RxTx mapping written");
+    LOG_DBG("12. RxTx mapping written");
 
     /* 13. Allocation of channels into cycles 0-9 (0x5D - 0x6B) */
     buf[0] = PLACEHOLDER_0;
@@ -623,9 +624,9 @@ static int iqs7211e_write_defaults(struct iqs7211e_data *data)
     buf[28] = CH_1_CYCLE_9;
     buf[29] = CH_2_CYCLE_9;
     ret = iqs7211e_write_bytes(i2c, 0x5D, buf, 30);
-    if (ret)
+    if (ret < 0)
         return ret;
-    LOG_INF("13. Cycle 0-9 allocation written");
+    LOG_DBG("13. Cycle 0-9 allocation written");
 
     /* 14. Allocation of channels into cycles 10-19 (0x6C - 0x7A) */
     buf[0] = PLACEHOLDER_10;
@@ -659,9 +660,9 @@ static int iqs7211e_write_defaults(struct iqs7211e_data *data)
     buf[28] = CH_1_CYCLE_19;
     buf[29] = CH_2_CYCLE_19;
     ret = iqs7211e_write_bytes(i2c, 0x6C, buf, 30);
-    if (ret)
+    if (ret < 0)
         return ret;
-    LOG_INF("14. Cycle 10-19 allocation written");
+    LOG_DBG("14. Cycle 10-19 allocation written");
 
     /* 15. Allocation of channels into cycle 20 (0x7B - 0x7C) */
     /* Memory Map Position 0x7B - 0x7C */
@@ -669,17 +670,16 @@ static int iqs7211e_write_defaults(struct iqs7211e_data *data)
     buf[1] = CH_1_CYCLE_20;
     buf[2] = CH_2_CYCLE_20;
     ret = iqs7211e_write_bytes(i2c, 0x7B, buf, 3);
-    if (ret)
+    if (ret < 0)
         return ret;
-    LOG_INF("15. Write Cycle 20  Settings");
-
+    LOG_DBG("15. Write Cycle 20  Settings");
     return 0;
 }
 
 static int iqs7211e_read_bytes(const struct i2c_dt_spec *i2c, uint8_t reg, uint8_t *data, size_t len)
 {
-    int ret = i2c_write_read(i2c->bus, i2c->addr, &reg, 1, data, len);
-    if (ret)
+    int ret = i2c_burst_read_dt(i2c, reg, data, len);
+    if (ret < 0)
     {
         LOG_ERR("i2c_read failed at reg 0x%02X (%zu bytes): %d", reg, len, ret);
     }
@@ -688,16 +688,14 @@ static int iqs7211e_read_bytes(const struct i2c_dt_spec *i2c, uint8_t reg, uint8
 
 static int iqs7211e_write_bytes(const struct i2c_dt_spec *i2c, uint8_t reg, const uint8_t *data, size_t len)
 {
-    uint8_t buffer[len + 1];
-    buffer[0] = reg;
-    memcpy(&buffer[1], data, len);
-    int ret = i2c_write(i2c->bus, buffer, len + 1, i2c->addr);
-    if (ret)
+    int ret = i2c_burst_write_dt(i2c, reg, data, len);
+    if (ret < 0)
     {
         LOG_ERR("i2c_write failed at reg 0x%02X (%zu bytes): %d", reg, len, ret);
     }
     return ret;
 }
+
 static void iqs7211e_work_handler(struct k_work *work)
 {
     struct iqs7211e_data *data = CONTAINER_OF(work, struct iqs7211e_data, work);
@@ -718,10 +716,10 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
     LOG_DBG("Finger 1: X=%d, Y=%d", data->finger_1_x, data->finger_1_y);
     LOG_DBG("Finger 2: X=%d, Y=%d", data->finger_2_x, data->finger_2_y);
     uint8_t skip_count = 2;
-    // Layer switcher
+    // Activate scroll layer
     if (num_fingers != 0 &&
         data->touch_count >= skip_count &&
-        data->touch_count <= skip_count + 1 &&
+        data->touch_count <= skip_count + 2 &&
         config->scroll_layer >= 0 &&
         !data->is_scroll_layer_active)
     {
@@ -785,6 +783,7 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
         }
     }
 
+    // Deactivate scroll layer
     if (num_fingers == 0 && data->is_scroll_layer_active)
     {
         zmk_keymap_layer_deactivate(config->scroll_layer, false);
@@ -866,7 +865,7 @@ static int iqs7211e_init(const struct device *dev)
     }
 
     ret = gpio_pin_configure_dt(&config->irq_gpio, GPIO_INPUT);
-    if (ret)
+    if (ret < 0)
     {
         LOG_ERR("Failed to configure IRQ pin: %d", ret);
         return ret;
@@ -874,7 +873,7 @@ static int iqs7211e_init(const struct device *dev)
 
     gpio_init_callback(&data->gpio_cb, iqs7211e_gpio_callback, BIT(config->irq_gpio.pin));
     ret = gpio_add_callback(config->irq_gpio.port, &data->gpio_cb);
-    if (ret)
+    if (ret < 0)
     {
         LOG_ERR("Failed to add GPIO callback: %d", ret);
         return ret;
@@ -893,9 +892,11 @@ static int iqs7211e_init(const struct device *dev)
 }
 
 #ifdef CONFIG_PM_DEVICE
-static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action action) {
+static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action action)
+{
     struct iqs7211e_data *data = dev->data;
-    switch (action) {
+    switch (action)
+    {
     case PM_DEVICE_ACTION_SUSPEND:
         return set_gpio_interrupt(dev, false);
     case PM_DEVICE_ACTION_RESUME:
@@ -903,6 +904,7 @@ static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action ac
         data->touch_count = 0;
         data->start_tap = 0;
         data->is_scroll_layer_active = false;
+        LOG_DBG("IQS7211E device resumed ");
         return set_gpio_interrupt(dev, true);
     default:
         return -ENOTSUP;
