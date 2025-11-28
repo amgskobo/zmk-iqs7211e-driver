@@ -99,7 +99,7 @@ Add the IQS7211E node in your keyboard DTS overlay file (example of XIAO_BLE boa
         single-tap = <0>;
         double-tap = <0>;
         triple-tap = <0>;
-        press-hold = <0>;
+        // press-hold = <0>;  // if you don't use
 
         /* Scroll slider settings */
         scroll_layer = <1>;

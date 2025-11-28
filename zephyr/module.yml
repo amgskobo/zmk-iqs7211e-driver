@@ -1,7 +1,7 @@
 # Delete all unused properties.
 
 # Give your module a name
-name: zmk-iqs7211e-driver
+name: zmk-driver-iqs7211e
 build:
   # Folder containing a "CMakeLists.txt" (. = root)
   cmake: .
