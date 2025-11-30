@@ -9,7 +9,7 @@ The driver also implements touch gesture and scroll slider features:
 - Single-tap / Double-tap / Triple-tap
 - Tap & Hold
 - Scroll slider (right-edge area)
-  - Activates a specified layer while touching (`scroll_layer=1` is generally used)
+  - Activates a specified layer while touching (`scroll_layer = <1>` is generally used)
   - Releases to off the layer
 - Rotation correction for flexible physical placement
 
@@ -24,7 +24,7 @@ The driver also implements touch gesture and scroll slider features:
 | `triple-tap` | int | -1 | Button triggered by triple-tap (-1=disabled, 0=BTN_0, 1=BTN_1, 2=BTN_2, ...) |
 | `press-hold` | int | -1 | Button triggered by tap-and-hold (-1=disabled, 0=BTN_0, 1=BTN_1, 2=BTN_2. ...)|
 | `scroll_layer` | int | -1 | Layer activated while first touching scroll slider area (-1=disabled, others=layer num) |
-| `scroll_start` | uint | 25 | Threshold/padding from right edge to activate scroll slider (max resolution 1024x/1024y) |
+| `scroll_start` | uint | 40 | Threshold/padding from right edge to activate scroll slider (max resolution 1024x/1024y) |
 | `rotate_cw` | uint | 0 | Rotation angle for scroll slider area **Clockwise** (0=0°, 1=90°, 2=180°, 3=270°) |
 
 

@@ -1,4 +1,9 @@
-// iqs7211e.c
+/*
+ * Copyright (c) 2025 @amgskobo
+ *
+ * SPDX-License-Identifier: MIT
+ */
+
 #define DT_DRV_COMPAT azoteq_iqs7211e
 
 #include <zephyr/device.h>
@@ -913,27 +918,27 @@ static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action ac
 }
 #endif // #ifdef CONFIG_PM_DEVICE
 
-#define IQS7211E_DEFINE(inst)                                           \
-    static struct iqs7211e_data iqs7211e_data_##inst;                   \
-    static const struct iqs7211e_config iqs7211e_config_##inst = {      \
-        .i2c = I2C_DT_SPEC_INST_GET(inst),                              \
-        .irq_gpio = GPIO_DT_SPEC_INST_GET(inst, irq_gpios),             \
-        .single_tap = DT_PROP_OR(DT_DRV_INST(inst), single_tap, 0),     \
-        .double_tap = DT_PROP_OR(DT_DRV_INST(inst), double_tap, 0),     \
-        .triple_tap = DT_PROP_OR(DT_DRV_INST(inst), triple_tap, 0),     \
-        .press_hold = DT_PROP_OR(DT_DRV_INST(inst), press_hold, 0),     \
-        .scroll_layer = DT_PROP_OR(DT_DRV_INST(inst), scroll_layer, 0), \
-        .scroll_start = DT_PROP_OR(DT_DRV_INST(inst), scroll_start, 0), \
-        .rotate_cw = DT_PROP_OR(DT_DRV_INST(inst), rotate_cw, 0),       \
-    };                                                                  \
-    PM_DEVICE_DT_INST_DEFINE(inst, iqs7211e_pm_action);                 \
-    DEVICE_DT_INST_DEFINE(inst,                                         \
-                          &iqs7211e_init,                               \
-                          PM_DEVICE_DT_INST_GET(inst),                  \
-                          &iqs7211e_data_##inst,                        \
-                          &iqs7211e_config_##inst,                      \
-                          POST_KERNEL,                                  \
-                          CONFIG_INPUT_INIT_PRIORITY,                   \
+#define IQS7211E_DEFINE(inst)                                      \
+    static struct iqs7211e_data iqs7211e_data_##inst;              \
+    static const struct iqs7211e_config iqs7211e_config_##inst = { \
+        .i2c = I2C_DT_SPEC_INST_GET(inst),                         \
+        .irq_gpio = GPIO_DT_SPEC_INST_GET(inst, irq_gpios),        \
+        .single_tap = DT_INST_PROP_OR(inst, single_tap, -1),       \
+        .double_tap = DT_INST_PROP_OR(inst, double_tap, -1),       \
+        .triple_tap = DT_INST_PROP_OR(inst, triple_tap, -1),       \
+        .press_hold = DT_INST_PROP_OR(inst, press_hold, -1),       \
+        .scroll_layer = DT_INST_PROP_OR(inst, scroll_layer, -1),   \
+        .scroll_start = DT_INST_PROP_OR(inst, scroll_start, 40),   \
+        .rotate_cw = DT_INST_PROP_OR(inst, rotate_cw, 0),          \
+    };                                                             \
+    PM_DEVICE_DT_INST_DEFINE(inst, iqs7211e_pm_action);            \
+    DEVICE_DT_INST_DEFINE(inst,                                    \
+                          &iqs7211e_init,                          \
+                          PM_DEVICE_DT_INST_GET(inst),             \
+                          &iqs7211e_data_##inst,                   \
+                          &iqs7211e_config_##inst,                 \
+                          POST_KERNEL,                             \
+                          CONFIG_INPUT_INIT_PRIORITY,              \
                           NULL);
 
 DT_INST_FOREACH_STATUS_OKAY(IQS7211E_DEFINE)

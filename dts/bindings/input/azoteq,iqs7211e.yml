@@ -44,7 +44,7 @@ properties:
       -1 = disabled, others = layer num
   scroll_start:
     type: int
-    default: 25
+    default: 40
     description: |
       Set resolution threshold to active scroll layer. (padding from edge)
       currently it has 1024x,1024y max resolution.

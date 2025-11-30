@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2025 @amgskobo
+ *
+ * SPDX-License-Identifier: MIT
+ */
+
 #include <zephyr/device.h>
 #include <zephyr/drivers/i2c.h>
 #include <zephyr/drivers/gpio.h>
