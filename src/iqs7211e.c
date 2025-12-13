@@ -30,7 +30,7 @@ static int iqs7211e_read_bytes(const struct i2c_dt_spec *i2c, uint8_t reg, uint8
 static int iqs7211e_write_bytes(const struct i2c_dt_spec *i2c, uint8_t reg, const uint8_t *data, size_t numBytes);
 static void iqs7211e_work_handler(struct k_work *work);
 static void iqs7211e_report_data(struct iqs7211e_data *data);
-static void iqs7211e_gpio_callback(const struct device *port, struct gpio_callback *cb, uint32_t pins);
+static void iqs7211e_gpio_callback(const struct device *port, struct gpio_callback *cb, gpio_port_pins_t pins);
 static int iqs7211e_write_defaults(struct iqs7211e_data *data);
 static int iqs7211e_sw_reset(struct iqs7211e_data *data);
 static int iqs7211e_run_ati(struct iqs7211e_data *data);
@@ -845,7 +845,7 @@ static int set_gpio_interrupt(const struct device *dev, const bool en)
     return 0;
 }
 
-static void iqs7211e_gpio_callback(const struct device *port, struct gpio_callback *cb, uint32_t pins)
+static void iqs7211e_gpio_callback(const struct device *port, struct gpio_callback *cb, gpio_port_pins_t pins)
 {
     struct iqs7211e_data *data = CONTAINER_OF(cb, struct iqs7211e_data, gpio_cb);
     set_gpio_interrupt(data->dev, false);
