@@ -2,7 +2,7 @@
 <img src=/img/iqs7211e_trackpad01.png width="500px" />
 
 ## 1. Overview
-This repository provides a driver for the **"Trackpad01"** (Azoteq IQS7211E touch/proximity sensor chip) for ZMK (Zephyr Mechanical Keyboard firmware) 3.5.
+This repository provides a driver for the **"Trackpad01"** (Azoteq IQS7211E touch/proximity sensor chip) for ZMK (Zephyr Mechanical Keyboard firmware). It has been verified with **Zephyr 4.1**.
 The driver is inspired by the [ZMK PMW3610 driver](https://github.com/inorichi/zmk-pmw3610-driver). While the IQS7211E chip itself supports full 2 fingers input, this small trackpad module **(padsize is 22mmX22mm)** only supports single-finger gestures. Supports standard ZMK interrupt-driven input, enabling responsive event handling.
 
 The driver also implements touch gesture and scroll slider features:
