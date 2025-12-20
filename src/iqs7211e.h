@@ -117,6 +117,7 @@ struct iqs7211e_config
     int8_t scroll_layer;
     uint16_t scroll_start;
     uint8_t rotate_cw;
+    bool report_abs;
 };
 
 struct iqs7211e_data

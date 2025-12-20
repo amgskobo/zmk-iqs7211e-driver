@@ -817,8 +817,16 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
 
     if (num_fingers != 0 && data->touch_count >= skip_count)
     {
-        input_report_rel(data->dev, INPUT_REL_X, smooth_dx, false, K_FOREVER);
-        input_report_rel(data->dev, INPUT_REL_Y, smooth_dy, true, K_FOREVER); // sync=true
+        if (config->report_abs)
+        {
+            input_report_abs(data->dev, INPUT_ABS_X, data->finger_1_x, false, K_FOREVER);
+            input_report_abs(data->dev, INPUT_ABS_Y, data->finger_1_y, true, K_FOREVER);
+        }
+        else
+        {
+            input_report_rel(data->dev, INPUT_REL_X, smooth_dx, false, K_FOREVER);
+            input_report_rel(data->dev, INPUT_REL_Y, smooth_dy, true, K_FOREVER); // sync=true
+        }
     }
     data->finger_1_prev_x = data->finger_1_x;
     data->finger_1_prev_y = data->finger_1_y;
@@ -930,6 +938,7 @@ static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action ac
         .scroll_layer = DT_INST_PROP_OR(inst, scroll_layer, -1),   \
         .scroll_start = DT_INST_PROP_OR(inst, scroll_start, 40),   \
         .rotate_cw = DT_INST_PROP_OR(inst, rotate_cw, 0),          \
+        .report_abs = DT_INST_PROP(inst, report_abs),              \
     };                                                             \
     PM_DEVICE_DT_INST_DEFINE(inst, iqs7211e_pm_action);            \
     DEVICE_DT_INST_DEFINE(inst,                                    \
