@@ -721,11 +721,13 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
     LOG_DBG("Fingers: %d, Gesture: %d", num_fingers, gesture_event);
     LOG_DBG("Finger 1: X=%d, Y=%d", data->finger_1_x, data->finger_1_y);
     LOG_DBG("Finger 2: X=%d, Y=%d", data->finger_2_x, data->finger_2_y);
-    uint8_t skip_count = 2;
-    // Activate scroll layer
+    // Skip first frame to initialize prev values for smooth delta calculation (averaging)
+    // This prevents reporting dx=dy=0 on first touch and ensures proper smoothing from second frame
+    uint8_t skip_count = 1;
+    // Activate scroll layer based on initial touch position
+    // Check during first 3 frames (0,1,2) independent of skip_count used for cursor smoothing
     if (num_fingers != 0 &&
-        data->touch_count >= skip_count &&
-        data->touch_count <= skip_count + 2 &&
+        data->touch_count <= 2 &&
         config->scroll_layer >= 0 &&
         !data->is_scroll_layer_active)
     {
@@ -815,15 +817,17 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
     int16_t smooth_dx = (dx + data->finger_1_prev_dx) >> 1;
     int16_t smooth_dy = (dy + data->finger_1_prev_dy) >> 1;
 
-    if (num_fingers != 0 && data->touch_count >= skip_count)
+    if (num_fingers != 0)
     {
         if (config->report_abs)
         {
+            // Absolute mode: report coordinates from first frame (no skip needed)
             input_report_abs(data->dev, INPUT_ABS_X, data->finger_1_x, false, K_FOREVER);
             input_report_abs(data->dev, INPUT_ABS_Y, data->finger_1_y, true, K_FOREVER);
         }
-        else
+        else if (data->touch_count >= skip_count)
         {
+            // Relative mode: skip first frame for smoothing initialization
             input_report_rel(data->dev, INPUT_REL_X, smooth_dx, false, K_FOREVER);
             input_report_rel(data->dev, INPUT_REL_Y, smooth_dy, true, K_FOREVER); // sync=true
         }
@@ -837,6 +841,10 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
     if (num_fingers == 0)
     {
         data->touch_count = 0;
+        data->finger_1_prev_x = 0;
+        data->finger_1_prev_y = 0;
+        data->finger_1_prev_dx = 0;
+        data->finger_1_prev_dy = 0;
     }
 }
 
