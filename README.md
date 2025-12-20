@@ -1,11 +1,14 @@
 # zmk-iqs7211e-driver
+
 <img src=/img/iqs7211e_trackpad01.png width="500px" />
 
 ## 1. Overview
+
 This repository provides a driver for the **"Trackpad01"** (Azoteq IQS7211E touch/proximity sensor chip) for ZMK (Zephyr Mechanical Keyboard firmware). It has been verified with **Zephyr 4.1**.
 The driver is inspired by the [ZMK PMW3610 driver](https://github.com/inorichi/zmk-pmw3610-driver). While the IQS7211E chip itself supports full 2 fingers input, this small trackpad module **(padsize is 22mmX22mm)** only supports single-finger gestures. Supports standard ZMK interrupt-driven input, enabling responsive event handling.
 
 The driver also implements touch gesture and scroll slider features:
+
 - Single-tap / Double-tap / Triple-tap
 - Tap & Hold
 - Scroll slider (right-edge area)
@@ -26,7 +29,7 @@ The driver also implements touch gesture and scroll slider features:
 | `scroll_layer` | int | -1 | Layer activated while first touching scroll slider area (-1=disabled, others=layer num) |
 | `scroll_start` | uint | 40 | Threshold/padding from right edge to activate scroll slider (max resolution 1024x/1024y) |
 | `rotate_cw` | uint | 0 | Rotation angle for scroll slider area **Clockwise** (0=0°, 1=90°, 2=180°, 3=270°) |
-
+| `report-abs` | boolean | false | If true, report absolute coordinates instead of relative ones. |
 
 ## 3. Installation (GitHub Actions)
 
@@ -123,7 +126,9 @@ Add the IQS7211E node in your keyboard DTS overlay file (example of XIAO_BLE boa
     };
 };
 ```
+
 Option: rotate 90 deg (rotate_cw = <1>)
+
 ```
 / {
     trackpad_input_listener: trackpad_input_listener {
@@ -142,7 +147,9 @@ Option: rotate 90 deg (rotate_cw = <1>)
     };
 };
 ```
+
 Option: rotate 180 deg (rotate_cw = <2>)
+
 ```
 / {
 
@@ -160,7 +167,9 @@ Option: rotate 180 deg (rotate_cw = <2>)
     };
 };
 ```
+
 Option: rotate 270 deg (rotate_cw = <3>)
+
 ```
 / {
 
@@ -200,23 +209,26 @@ The GitHub Actions workflow automatically builds the firmware and generates arti
 ## 4. HW and Dimensions
 
 ### 4.1 Trackpad01 Front view (HASL)
+
 <img src=/img/iqs7211e_trackpad01_front.png width="500px" />
 
 ### 4.2 Trackpad01 Back view (HASL)
 
 <img src=/img/iqs7211e_trackpad01_back.png width="500px" />
 
-### 4.3 Pin Assignment (all +3V3 logic) 
+### 4.3 Pin Assignment (all +3V3 logic)
+
 | PIN | value | info |
 |-----|-------|------|
 |1  |  GND |  - |
 |2  |  GND |  - |
 |3  |  RDY | irq interrupt pin |
 |4  |  +3V3 | VDD |
-|5  |  SDA | i2c data| 
+|5  |  SDA | i2c data|
 |6  |  SCL | i2c clock |
 
 ### 4.4 BOMs
+
 | Property | Value | Type | Qty | Link |
 |----------|------|---------|-------------|-----|
 | `C1,C3,C5` | 100pF | 0805_SMD | 3 | |
@@ -228,6 +240,7 @@ The GitHub Actions workflow automatically builds the firmware and generates arti
 | `U1` | IQS7211E001QNR |  IQS7211E001QNR(20-QFN)| 1| [digikey](https://www.digikey.jp/en/products/detail/azoteq-pty-ltd/IQS7211E001QNR/18627341)|
 
 ### 4.5 PCB Specifications
+
 The PCB used with this driver is a 2-layer FR4 board with a standard thickness of 1.6 mm. The recommended finish for the PCB is ENIG (Electroless Nickel Immersion Gold).
 
 The ENIG finish provides high durability for the edges of the trackpad and connector areas, allowing for long-term stable use. In addition, the gold layer prevents oxidation, ensuring stable touch sensitivity and response.
@@ -235,20 +248,23 @@ The ENIG finish provides high durability for the edges of the trackpad and conne
 Please note that if the PCB thickness is different from 1.6 mm, it may affect the installation and feel of the trackpad. Also, the ENIG finish may incur higher costs compared to standard finishes.
 
 ### 4.6 Trackpad Surface Material
+
 Make sure to attach some kind of material to the trackpad surface.
-The trackpad will not function properly if used without any material attached. 
+The trackpad will not function properly if used without any material attached.
 Typically, we recommend a film thickness of 1-2 mm.
 
 ### 4.7 TP Configuration Examples
 
 You can modify the sensor behavior by editing the `src/IQS7211E_init.h` file provided by Azoteq. This file contains all necessary initialization and gesture settings.
 Edit values here to adjust:
+
 - Gesture timing, thresholds, and distances
 - Report rates and timeouts
 - Hardware and ALP settings
 - Channel allocation and cycles
 
 For more details, looking at the datasheet&references:
+
 - [iqs7211e_datasheet](/docs/iqs7211e_datasheet.pdf)
 - [azd123_iqs721xy_trackpad_userguide](/docs/azd123_iqs721xy_trackpad_userguide.pdf)
 - [azd128-gamepad-trackpad-design-guide_v1.0](/docs/azd128-gamepad-trackpad-design-guide_v1.0.pdf)
