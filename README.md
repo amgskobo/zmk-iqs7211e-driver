@@ -1,5 +1,7 @@
 # zmk-iqs7211e-driver
 
+[[日本語]](README_JA.md)
+
 <img src=/img/iqs7211e_trackpad01.png width="500px" />
 
 ## 1. Overview
@@ -30,6 +32,12 @@ The driver also implements touch gesture and scroll slider features:
 | `scroll_start` | uint | 40 | Threshold/padding from right edge to activate scroll slider (max resolution 1024x/1024y) |
 | `rotate_cw` | uint | 0 | Rotation angle for scroll slider area **Clockwise** (0=0°, 1=90°, 2=180°, 3=270°) |
 | `report-abs` | boolean | false | If true, report absolute coordinates instead of relative ones. |
+
+### 2.1 Absolute Pointer Report Mode
+
+By default, this driver reports relative coordinates (`INPUT_REL_X`, `INPUT_REL_Y`). By setting `report-abs;` in the Device Tree, it will switch to absolute coordinates (`INPUT_ABS_X`, `INPUT_ABS_Y`).
+This is useful when combined with ZMK input processors that expect absolute data, such as a digitizer-to-mouse converter.
+The absolute coordinates are reported in the range of 0 to 1024 (as defined by the chip's resolution).
 
 ## 3. Installation (GitHub Actions)
 
@@ -108,6 +116,7 @@ Add the IQS7211E node in your keyboard DTS overlay file (example of XIAO_BLE boa
         scroll_layer = <1>;
         scroll_start = <27>;
         rotate_cw = <0>;
+        // report-abs; // Use absolute coordinates (0-1024)
     };
 };
 
@@ -129,7 +138,7 @@ Add the IQS7211E node in your keyboard DTS overlay file (example of XIAO_BLE boa
 
 Option: rotate 90 deg (rotate_cw = <1>)
 
-```
+```dts
 / {
     trackpad_input_listener: trackpad_input_listener {
         compatible = "zmk,input-listener";
@@ -150,7 +159,7 @@ Option: rotate 90 deg (rotate_cw = <1>)
 
 Option: rotate 180 deg (rotate_cw = <2>)
 
-```
+```dts
 / {
 
     trackpad_input_listener: trackpad_input_listener {
@@ -170,7 +179,7 @@ Option: rotate 180 deg (rotate_cw = <2>)
 
 Option: rotate 270 deg (rotate_cw = <3>)
 
-```
+```dts
 / {
 
     trackpad_input_listener: trackpad_input_listener {
@@ -189,11 +198,11 @@ Option: rotate 270 deg (rotate_cw = <3>)
 };
 ```
 
-### 3.3 Optional: Enable Driver in Kconfig
+### 3.3 Enable Driver in Kconfig
 
-If required, add the driver to your `board.conf`:
+Add the driver to your `board.conf`:
 
-```
+```kconfig
 CONFIG_I2C=y
 CONFIG_GPIO=y
 CONFIG_INPUT=y
@@ -255,7 +264,7 @@ Typically, we recommend a film thickness of 1-2 mm.
 
 ### 4.7 TP Configuration Examples
 
-You can modify the sensor behavior by editing the `src/IQS7211E_init.h` file provided by Azoteq. This file contains all necessary initialization and gesture settings.
+You can modify the sensor behavior by editing the `src/iqs7211e_init.h` file provided by Azoteq. This file contains all necessary initialization and gesture settings.
 Edit values here to adjust:
 
 - Gesture timing, thresholds, and distances
