@@ -56,6 +56,5 @@ properties:
       0 = 0 deg, 1 = 90 deg, 2 = 180 deg, 3 = 270 deg
   report-abs:
     type: boolean
-    default: false
     description: |
       If true, report absolute coordinates instead of relative ones.
