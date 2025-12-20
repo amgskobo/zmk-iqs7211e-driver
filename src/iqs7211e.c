@@ -718,7 +718,7 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
     iqs7211e_queue_value_updates(data);
     uint8_t num_fingers = iqs7211e_get_num_fingers(data);
     uint8_t gesture_event = iqs7211e_get_touchpad_event(data);
-    LOG_DBG("Fingers: %d, Gesture: %d", num_fingers, gesture_event);
+    LOG_DBG("Fingers: %d, Gesture: %d, Mode: %s", num_fingers, gesture_event, config->report_abs ? "Abs" : "Rel");
     LOG_DBG("Finger 1: X=%d, Y=%d", data->finger_1_x, data->finger_1_y);
     LOG_DBG("Finger 2: X=%d, Y=%d", data->finger_2_x, data->finger_2_y);
     // Skip first frame to initialize prev values for smooth delta calculation (averaging)
