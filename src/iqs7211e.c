@@ -319,17 +319,22 @@ static int iqs7211e_set_event_mode(struct iqs7211e_data *data)
 
 static enum iqs7211e_gestures_event iqs7211e_get_touchpad_event(const struct iqs7211e_data *data)
 {
-    if (iqs7211e_get_bit(data->gestures[0], IQS7211E_GESTURE_SINGLE_TAP_BIT))
+    /*
+     * Priority Check: Triple > Double > Single.
+     * Higher-order gestures take precedence in case multiple flags are set
+     * within the same I2C data packet, ensuring the most complete gesture is reported.
+     */
+    if (iqs7211e_get_bit(data->gestures[0], IQS7211E_GESTURE_TRIPLE_TAP_BIT))
     {
-        return IQS7211E_GESTURE_SINGLE_TAP;
+        return IQS7211E_GESTURE_TRIPLE_TAP;
     }
     else if (iqs7211e_get_bit(data->gestures[0], IQS7211E_GESTURE_DOUBLE_TAP_BIT))
     {
         return IQS7211E_GESTURE_DOUBLE_TAP;
     }
-    else if (iqs7211e_get_bit(data->gestures[0], IQS7211E_GESTURE_TRIPLE_TAP_BIT))
+    else if (iqs7211e_get_bit(data->gestures[0], IQS7211E_GESTURE_SINGLE_TAP_BIT))
     {
-        return IQS7211E_GESTURE_TRIPLE_TAP;
+        return IQS7211E_GESTURE_SINGLE_TAP;
     }
     else if (iqs7211e_get_bit(data->gestures[0], IQS7211E_GESTURE_PRESS_HOLD_BIT))
     {
@@ -744,12 +749,18 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
 
     if (!data->is_scroll_layer_active)
     {
+        /*
+         * Synchronous Multi-Click Reporting:
+         * Uses k_msleep to create a reliable pulse (press -> 50ms -> release).
+         * This ensures the host OS consistently registers the inputs as distinct click events.
+         */
         switch (gesture_event)
         {
         case IQS7211E_GESTURE_SINGLE_TAP:
             if (config->single_tap >= 0)
             {
                 input_report_key(data->dev, INPUT_BTN_0 + config->single_tap, true, true, K_FOREVER);
+                k_msleep(50);
                 input_report_key(data->dev, INPUT_BTN_0 + config->single_tap, false, true, K_FOREVER);
             }
             break;
@@ -759,7 +770,9 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
                 for (int i = 0; i < 2; i++)
                 {
                     input_report_key(data->dev, INPUT_BTN_0 + config->double_tap, true, true, K_FOREVER);
+                    k_msleep(50);
                     input_report_key(data->dev, INPUT_BTN_0 + config->double_tap, false, true, K_FOREVER);
+                    k_msleep(50);
                 }
             }
             break;
@@ -769,7 +782,9 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
                 for (int i = 0; i < 3; i++)
                 {
                     input_report_key(data->dev, INPUT_BTN_0 + config->triple_tap, true, true, K_FOREVER);
+                    k_msleep(50);
                     input_report_key(data->dev, INPUT_BTN_0 + config->triple_tap, false, true, K_FOREVER);
+                    k_msleep(50);
                 }
             }
             break;
@@ -799,19 +814,39 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
         LOG_DBG("Scroll layer deactivated");
     }
 
+    /* Apply coordinate rotation based on config->rotate_cw */
+    int16_t x = data->finger_1_x;
+    int16_t y = data->finger_1_y;
+
+    if (config->rotate_cw == 1)
+    {
+        x = RESOLUTION_Y - data->finger_1_y;
+        y = data->finger_1_x;
+    }
+    else if (config->rotate_cw == 2)
+    {
+        x = RESOLUTION_X - data->finger_1_x;
+        y = RESOLUTION_Y - data->finger_1_y;
+    }
+    else if (config->rotate_cw == 3)
+    {
+        x = data->finger_1_y;
+        y = RESOLUTION_X - data->finger_1_x;
+    }
+
     if (data->finger_1_prev_x == 0)
     {
-        data->finger_1_prev_x = data->finger_1_x;
+        data->finger_1_prev_x = x;
         data->finger_1_prev_dx = 0;
     }
     if (data->finger_1_prev_y == 0)
     {
-        data->finger_1_prev_y = data->finger_1_y;
+        data->finger_1_prev_y = y;
         data->finger_1_prev_dy = 0;
     }
 
-    int16_t dx = data->finger_1_x - data->finger_1_prev_x;
-    int16_t dy = data->finger_1_y - data->finger_1_prev_y;
+    int16_t dx = x - data->finger_1_prev_x;
+    int16_t dy = y - data->finger_1_prev_y;
 
     // smooth_dx = (dx + data->finger_1_prev_dx) / 2;
     int16_t smooth_dx = (dx + data->finger_1_prev_dx) >> 1;
@@ -822,8 +857,8 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
         if (config->report_abs)
         {
             // Absolute mode: report coordinates from first frame (no skip needed)
-            input_report_abs(data->dev, INPUT_ABS_X, data->finger_1_x, false, K_FOREVER);
-            input_report_abs(data->dev, INPUT_ABS_Y, data->finger_1_y, true, K_FOREVER);
+            input_report_abs(data->dev, INPUT_ABS_X, x, false, K_FOREVER);
+            input_report_abs(data->dev, INPUT_ABS_Y, y, true, K_FOREVER);
         }
         else if (data->touch_count >= skip_count)
         {
@@ -832,8 +867,8 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
             input_report_rel(data->dev, INPUT_REL_Y, smooth_dy, true, K_FOREVER); // sync=true
         }
     }
-    data->finger_1_prev_x = data->finger_1_x;
-    data->finger_1_prev_y = data->finger_1_y;
+    data->finger_1_prev_x = x;
+    data->finger_1_prev_y = y;
     data->finger_1_prev_dx = dx;
     data->finger_1_prev_dy = dy;
 
