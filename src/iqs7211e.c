@@ -955,7 +955,7 @@ static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action ac
     {
     case PM_DEVICE_ACTION_SUSPEND:
         set_gpio_interrupt(dev, false);
-        return k_work_cancel_sync(&data->work);
+        return k_work_cancel_sync(&data->work, &data->work_sync);
     case PM_DEVICE_ACTION_RESUME:
         data->init_state = IQS7211E_INIT_VERIFY_PRODUCT;
         data->touch_count = 0;
