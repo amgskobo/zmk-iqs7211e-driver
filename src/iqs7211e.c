@@ -281,6 +281,10 @@ static int iqs7211e_queue_value_updates(struct iqs7211e_data *data)
     data->finger_1_x = (buf[5] << 8) | buf[4];
     data->finger_1_y = (buf[7] << 8) | buf[6];
 
+    /* 
+     * Finger 2 is physically not supported on this 22x22mm module.
+     * Disabling to optimize I2C traffic.
+     *
     ret = iqs7211e_read_bytes(&config->i2c, IQS7211E_MM_FINGER_2_X, buf, 4);
     if (ret < 0)
     {
@@ -289,6 +293,8 @@ static int iqs7211e_queue_value_updates(struct iqs7211e_data *data)
     }
     data->finger_2_x = (buf[1] << 8) | buf[0];
     data->finger_2_y = (buf[3] << 8) | buf[2];
+    */
+
     return 0;
 }
 
@@ -742,8 +748,9 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
     }
 
     LOG_DBG("Fingers: %d, Gesture: %d, Mode: %s", num_fingers, gesture_event, config->report_abs ? "Abs" : "Rel");
-    LOG_DBG("Raw: F1(X=%d, Y=%d), F2(X=%d, Y=%d) | Norm: X=%d, Y=%d", 
-            data->finger_1_x, data->finger_1_y, data->finger_2_x, data->finger_2_y, x, y);
+    /* Finger 2 reporting is disabled for this hardware profile */
+    LOG_DBG("Raw: F1(X=%d, Y=%d) | Norm: X=%d, Y=%d", 
+            data->finger_1_x, data->finger_1_y, x, y);
 
     // Skip first frame setup for smoothing
     uint8_t skip_count = 1;
@@ -866,6 +873,8 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
     if (num_fingers == 0)
     {
         data->touch_count = 0;
+        data->finger_1_prev_dx = 0;
+        data->finger_1_prev_dy = 0;
     }
     else if (data->touch_count < 255)
     {
