@@ -17,7 +17,8 @@
 - スクロールスライダー (右端エリア)
   - タッチ中に指定したレイヤーをアクティブにします (`scroll_layer = <1>` が一般的です)
   - 離すとレイヤーをオフにします
-- 物理的な配置に合わせた回転補正
+- 時計回りの回転補正 (`rotate_cw`): スクロールエリアの自動追従を含む、高精度な座標変換。**インプットプロセッサー側での座標変換（回転・反転）を不要にします。**
+- 「最奥」クオリティの堅牢性: 境界値の数学的厳密化 (Off-by-one Fix) および PM (電源管理) 時の安全な通信停止を実装。
 
 ## 2. デバイスツリーのプロパティ
 
@@ -31,7 +32,7 @@
 | `press-hold` | int | -1 | タップ & ホールドでトリガーされるボタン (-1=無効, 0=BTN_0, 1=BTN_1, ...)|
 | `scroll_layer` | int | -1 | スクロールスライダーエリアをタッチした時にアクティブになるレイヤー (-1=無効, その他=レイヤー番号) |
 | `scroll_start` | uint | 40 | スクロールスライダーを有効にする右端からの閾値/パディング (最大解像度 1024x/1024y) |
-| `rotate_cw` | uint | 0 | スクロールエリアの**時計回り**の回転角度 (0=0°, 1=90°, 2=180°, 3=270°) |
+| `rotate_cw` | uint | 0 | **物理配置に合わせた時計回りの回転角度** (0=0°, 1=90°, 2=180°, 3=270°)。<br>ドライバ内部でスクロールエリア判定も含めて一括して座標変換を行います。 |
 | `report-abs` | boolean | false | true の場合、相対座標ではなく絶対座標を報告します。 |
 
 ### 2.1 絶対座標レポートモード
@@ -137,6 +138,8 @@ manifest:
 };
 ```
 
+出力される座標はドライバ内部ですでに補正済みのため、後続の `trackpad_input_listener` では回転や反転の処理 (`zip_xy_transform`, `zip_xy_swap_mapper` 等) を記述する必要はなく、感度調整や慣性移動（inertia）の適用に専念できます。
+
 オプション：90度回転 (rotate_cw = <1>)
 
 ```dts
@@ -145,52 +148,11 @@ manifest:
         compatible = "zmk,input-listener";
         status = "okay";
         device = <&iqs7211e>;
-        input-processors = <&zip_xy_transform (INPUT_TRANSFORM_Y_INVERT)>,
-                           <&zip_xy_swap_mapper>;
+        /* ドライバ側で回転済みのため、ここでは軸変換は不要 */
+        input-processors = <&zip_xy_scaler 1 1>; 
         scroller {
             layers = <1>;
-            input-processors = <&zip_xy_transform (INPUT_TRANSFORM_X_INVERT | INPUT_TRANSFORM_Y_INVERT)>,
-                               <&zip_xy_swap_mapper>,
-                               <&zip_xy_scaler 1 20>, 
-                               <&zip_xy_to_scroll_mapper>;
-        };
-    };
-};
-```
-
-オプション：180度回転 (rotate_cw = <2>)
-
-```dts
-/ {
-    trackpad_input_listener: trackpad_input_listener {
-        compatible = "zmk,input-listener";
-        status = "okay";
-        device = <&iqs7211e>;
-        input-processors = <&zip_xy_transform (INPUT_TRANSFORM_X_INVERT | INPUT_TRANSFORM_Y_INVERT)>;
-        scroller {
-            layers = <1>;
-            input-processors = <&zip_xy_transform (INPUT_TRANSFORM_X_INVERT)>,
-                               <&zip_xy_scaler 1 20>, 
-                               <&zip_xy_to_scroll_mapper>;
-        };
-    };
-};
-```
-
-オプション：270度回転 (rotate_cw = <3>)
-
-```dts
-/ {
-    trackpad_input_listener: trackpad_input_listener {
-        compatible = "zmk,input-listener";
-        status = "okay";
-        device = <&iqs7211e>;
-        input-processors = <&zip_xy_transform (INPUT_TRANSFORM_X_INVERT)>,
-                           <&zip_xy_swap_mapper>;
-        scroller {
-            layers = <1>;
-            input-processors = <&zip_xy_swap_mapper>,
-                               <&zip_xy_scaler 1 20>, 
+            input-processors = <&zip_xy_scaler 1 20>, 
                                <&zip_xy_to_scroll_mapper>;
         };
     };

@@ -16,7 +16,8 @@ The driver also implements touch gesture and scroll slider features:
 - Scroll slider (right-edge area)
   - Activates a specified layer while touching (`scroll_layer = <1>` is generally used)
   - Releases to off the layer
-- Rotation correction for flexible physical placement
+- Precise rotation correction (`rotate_cw`) for flexible physical placement, including automatic slider area adjustment. **Eliminates the need for manual rotation/flipping in input processors.**
+- "Ultimate Quality" Rigor: Implemented mathematical boundary fixes (Off-by-one) and safe PM (Power Management) execution guards.
 
 ## 2. Device Tree Properties
 
@@ -30,7 +31,7 @@ The driver also implements touch gesture and scroll slider features:
 | `press-hold` | int | -1 | Button triggered by tap-and-hold (-1=disabled, 0=BTN_0, 1=BTN_1, 2=BTN_2. ...)|
 | `scroll_layer` | int | -1 | Layer activated while first touching scroll slider area (-1=disabled, others=layer num) |
 | `scroll_start` | uint | 40 | Threshold/padding from right edge to activate scroll slider (max resolution 1024x/1024y) |
-| `rotate_cw` | uint | 0 | Rotation angle for scroll slider area **Clockwise** (0=0°, 1=90°, 2=180°, 3=270°) |
+| `rotate_cw` | uint | 0 | **CW Rotation angle to match physical placement** (0=0°, 1=90°, 2=180°, 3=270°). <br>Coordinates and scroll area are normalized internally. |
 | `report-abs` | boolean | false | If true, report absolute coordinates instead of relative ones. |
 
 ### 2.1 Absolute Pointer Report Mode
@@ -120,21 +121,24 @@ Add the IQS7211E node in your keyboard DTS overlay file (example of XIAO_BLE boa
     };
 };
 
+```dts
 / {
     trackpad_input_listener: trackpad_input_listener {
         compatible = "zmk,input-listener";
         status = "okay";
         device = <&iqs7211e>;
-        /* Scroll slider settings with using custom input-processors */
+        /* No need for zip_xy_transform here as rotation is handled by the driver */
+        input-processors = <&zip_xy_scaler 1 1>; 
         scroller {
             layers = <1>;
             input-processors = <&zip_xy_scaler 1 20>, 
-                               <&zip_xy_transform (INPUT_TRANSFORM_Y_INVERT)>,
                                <&zip_xy_to_scroll_mapper>;
         };
     };
 };
 ```
+
+Since the coordinates are already corrected inside the driver based on `rotate_cw`, you don't need to specify `zip_xy_transform` or `zip_xy_swap_mapper` in the listener. Focus only on sensitivity and inertia.
 
 Option: rotate 90 deg (rotate_cw = <1>)
 
@@ -144,54 +148,11 @@ Option: rotate 90 deg (rotate_cw = <1>)
         compatible = "zmk,input-listener";
         status = "okay";
         device = <&iqs7211e>;
-        input-processors = <&zip_xy_transform (INPUT_TRANSFORM_Y_INVERT)>,
-                           <&zip_xy_swap_mapper>;
+        /* Driver handles the rotation; processors handle the performance/feel */
+        input-processors = <&zip_xy_scaler 1 1>; 
         scroller {
             layers = <1>;
-            input-processors = <&zip_xy_transform (INPUT_TRANSFORM_X_INVERT | INPUT_TRANSFORM_Y_INVERT)>,
-                               <&zip_xy_swap_mapper>,
-                               <&zip_xy_scaler 1 20>, 
-                               <&zip_xy_to_scroll_mapper>;
-        };
-    };
-};
-```
-
-Option: rotate 180 deg (rotate_cw = <2>)
-
-```dts
-/ {
-
-    trackpad_input_listener: trackpad_input_listener {
-        compatible = "zmk,input-listener";
-        status = "okay";
-        device = <&iqs7211e>;
-        input-processors = <&zip_xy_transform (INPUT_TRANSFORM_X_INVERT | INPUT_TRANSFORM_Y_INVERT)>;
-        scroller {
-            layers = <1>;
-            input-processors = <&zip_xy_transform (INPUT_TRANSFORM_X_INVERT)>,
-                               <&zip_xy_scaler 1 20>, 
-                               <&zip_xy_to_scroll_mapper>;
-        };
-    };
-};
-```
-
-Option: rotate 270 deg (rotate_cw = <3>)
-
-```dts
-/ {
-
-    trackpad_input_listener: trackpad_input_listener {
-        compatible = "zmk,input-listener";
-        status = "okay";
-        device = <&iqs7211e>;
-        input-processors = <&zip_xy_transform (INPUT_TRANSFORM_X_INVERT)>,
-                           <&zip_xy_swap_mapper>;
-        scroller {
-            layers = <1>;
-            input-processors = <&zip_xy_swap_mapper>,
-                               <&zip_xy_scaler 1 20>, 
+            input-processors = <&zip_xy_scaler 1 20>, 
                                <&zip_xy_to_scroll_mapper>;
         };
     };
