@@ -720,23 +720,43 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
     }
     uint8_t num_fingers = iqs7211e_get_num_fingers(data);
     uint8_t gesture_event = iqs7211e_get_touchpad_event(data);
+
+    /* 1. Canonicalize coordinates (Normalized to user orientation) */
+    int16_t x = data->finger_1_x;
+    int16_t y = data->finger_1_y;
+
+    if (config->rotate_cw == 1)
+    {
+        x = (RESOLUTION_Y - 1) - data->finger_1_y;
+        y = data->finger_1_x;
+    }
+    else if (config->rotate_cw == 2)
+    {
+        x = (RESOLUTION_X - 1) - data->finger_1_x;
+        y = (RESOLUTION_Y - 1) - data->finger_1_y;
+    }
+    else if (config->rotate_cw == 3)
+    {
+        x = data->finger_1_y;
+        y = (RESOLUTION_X - 1) - data->finger_1_x;
+    }
+
     LOG_DBG("Fingers: %d, Gesture: %d, Mode: %s", num_fingers, gesture_event, config->report_abs ? "Abs" : "Rel");
-    LOG_DBG("Finger 1: X=%d, Y=%d", data->finger_1_x, data->finger_1_y);
-    LOG_DBG("Finger 2: X=%d, Y=%d", data->finger_2_x, data->finger_2_y);
-    // Skip first frame to initialize prev values for smooth delta calculation (averaging)
-    // This prevents reporting dx=dy=0 on first touch and ensures proper smoothing from second frame
+    LOG_DBG("Raw: F1(X=%d, Y=%d), F2(X=%d, Y=%d) | Norm: X=%d, Y=%d", 
+            data->finger_1_x, data->finger_1_y, data->finger_2_x, data->finger_2_y, x, y);
+
+    // Skip first frame setup for smoothing
     uint8_t skip_count = 1;
-    // Activate scroll layer based on initial touch position
+
+    // 2. Simplified Scroll layer detection (uses normalized coordinates)
     // Check during first 3 frames (0,1,2) independent of skip_count used for cursor smoothing
     if (num_fingers != 0 &&
         data->touch_count <= 2 &&
         config->scroll_layer >= 0 &&
         !data->is_scroll_layer_active)
     {
-        if ((config->rotate_cw == 0 && data->finger_1_x > RESOLUTION_X - config->scroll_start) ||
-            (config->rotate_cw == 1 && data->finger_1_y < config->scroll_start) ||
-            (config->rotate_cw == 2 && data->finger_1_x < config->scroll_start) ||
-            (config->rotate_cw == 3 && data->finger_1_y > RESOLUTION_Y - config->scroll_start))
+        // For normalized coordinates, the scroll area is always at the right edge
+        if (x > (RESOLUTION_X - 1) - config->scroll_start)
         {
             zmk_keymap_layer_activate(config->scroll_layer, false);
             data->is_scroll_layer_active = true;
@@ -811,39 +831,11 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
         LOG_DBG("Scroll layer deactivated");
     }
 
-    /* Apply coordinate rotation based on config->rotate_cw */
-    int16_t x = data->finger_1_x;
-    int16_t y = data->finger_1_y;
-
-    if (config->rotate_cw == 1)
-    {
-        x = RESOLUTION_Y - data->finger_1_y;
-        y = data->finger_1_x;
-    }
-    else if (config->rotate_cw == 2)
-    {
-        x = RESOLUTION_X - data->finger_1_x;
-        y = RESOLUTION_Y - data->finger_1_y;
-    }
-    else if (config->rotate_cw == 3)
-    {
-        x = data->finger_1_y;
-        y = RESOLUTION_X - data->finger_1_x;
-    }
-
-    if (data->finger_1_prev_x == 0)
-    {
-        data->finger_1_prev_x = x;
-        data->finger_1_prev_dx = 0;
-    }
-    if (data->finger_1_prev_y == 0)
-    {
-        data->finger_1_prev_y = y;
-        data->finger_1_prev_dy = 0;
-    }
-
-    int16_t dx = x - data->finger_1_prev_x;
-    int16_t dy = y - data->finger_1_prev_y;
+    /* 3. Minimalist Movement Calculation
+     * Initializing delta to 0 on the first frame (touch_count == 0) prevents cursor jumping.
+     */
+    int16_t dx = (data->touch_count == 0) ? 0 : (x - data->finger_1_prev_x);
+    int16_t dy = (data->touch_count == 0) ? 0 : (y - data->finger_1_prev_y);
 
     // smooth_dx = (dx + data->finger_1_prev_dx) / 2;
     int16_t smooth_dx = (dx + data->finger_1_prev_dx) >> 1;
@@ -864,19 +856,20 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
             input_report_rel(data->dev, INPUT_REL_Y, smooth_dy, true, K_FOREVER); // sync=true
         }
     }
+
+    /* 4. Update History */
     data->finger_1_prev_x = x;
     data->finger_1_prev_y = y;
     data->finger_1_prev_dx = dx;
     data->finger_1_prev_dy = dy;
 
-    data->touch_count++;
     if (num_fingers == 0)
     {
         data->touch_count = 0;
-        data->finger_1_prev_x = 0;
-        data->finger_1_prev_y = 0;
-        data->finger_1_prev_dx = 0;
-        data->finger_1_prev_dy = 0;
+    }
+    else if (data->touch_count < 255)
+    {
+        data->touch_count++;
     }
 }
 
@@ -952,7 +945,8 @@ static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action ac
     switch (action)
     {
     case PM_DEVICE_ACTION_SUSPEND:
-        return set_gpio_interrupt(dev, false);
+        set_gpio_interrupt(dev, false);
+        return k_work_cancel_sync(&data->work);
     case PM_DEVICE_ACTION_RESUME:
         data->init_state = IQS7211E_INIT_VERIFY_PRODUCT;
         data->touch_count = 0;
