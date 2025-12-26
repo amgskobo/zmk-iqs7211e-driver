@@ -784,7 +784,7 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
             if (config->single_tap >= 0)
             {
                 input_report_key(data->dev, INPUT_BTN_0 + config->single_tap, true, true, K_FOREVER);
-                k_msleep(50);
+                k_msleep(20);
                 input_report_key(data->dev, INPUT_BTN_0 + config->single_tap, false, true, K_FOREVER);
             }
             break;
@@ -794,9 +794,9 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
                 for (int i = 0; i < 2; i++)
                 {
                     input_report_key(data->dev, INPUT_BTN_0 + config->double_tap, true, true, K_FOREVER);
-                    k_msleep(50);
+                    k_msleep(20);
                     input_report_key(data->dev, INPUT_BTN_0 + config->double_tap, false, true, K_FOREVER);
-                    k_msleep(50);
+                    k_msleep(20);
                 }
             }
             break;
@@ -806,9 +806,9 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
                 for (int i = 0; i < 3; i++)
                 {
                     input_report_key(data->dev, INPUT_BTN_0 + config->triple_tap, true, true, K_FOREVER);
-                    k_msleep(50);
+                    k_msleep(20);
                     input_report_key(data->dev, INPUT_BTN_0 + config->triple_tap, false, true, K_FOREVER);
-                    k_msleep(50);
+                    k_msleep(20);
                 }
             }
             break;
