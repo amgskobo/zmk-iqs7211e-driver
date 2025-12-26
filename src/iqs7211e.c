@@ -389,13 +389,7 @@ static uint8_t iqs7211e_get_bit(uint8_t byte, uint8_t pos)
 
 static uint8_t iqs7211e_get_num_fingers(const struct iqs7211e_data *data)
 {
-    uint8_t info_flags[2];
-    int ret = iqs7211e_read_info_flags(data, info_flags);
-    if (ret < 0)
-    {
-        return 0xFF; // 255 invalid number
-    }
-    uint8_t byte = info_flags[1];
+    uint8_t byte = data->info_flags[1];
     uint8_t num = iqs7211e_get_bit(byte, IQS7211E_NUM_FINGERS_BIT_0) |
                   (iqs7211e_get_bit(byte, IQS7211E_NUM_FINGERS_BIT_1) << 1);
     return num;
@@ -720,7 +714,10 @@ static void iqs7211e_work_handler(struct k_work *work)
 static void iqs7211e_report_data(struct iqs7211e_data *data)
 {
     const struct iqs7211e_config *config = data->dev->config;
-    iqs7211e_queue_value_updates(data);
+    if (iqs7211e_queue_value_updates(data) < 0)
+    {
+        return;
+    }
     uint8_t num_fingers = iqs7211e_get_num_fingers(data);
     uint8_t gesture_event = iqs7211e_get_touchpad_event(data);
     LOG_DBG("Fingers: %d, Gesture: %d, Mode: %s", num_fingers, gesture_event, config->report_abs ? "Abs" : "Rel");
