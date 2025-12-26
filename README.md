@@ -23,15 +23,15 @@ The driver also implements touch gesture and scroll slider features:
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `reg` | byte  | 0x56 | I2C address of the device (required)  |
-| `irq-gpios` | phandle-array |  | Interrupt pin (required)|
+| `reg` | byte | 0x56 | I2C address of the device (required) |
+| `irq-gpios` | phandle-array | | Interrupt pin (required)|
 | `single-tap` | int | -1 | Button triggered by single-tap (-1=disabled, 0=BTN_0, 1=BTN_1, 2=BTN_2, ...) |
 | `double-tap` | int | -1 | Button triggered by double-tap (-1=disabled, 0=BTN_0, 1=BTN_1, 2=BTN_2, ...) |
 | `triple-tap` | int | -1 | Button triggered by triple-tap (-1=disabled, 0=BTN_0, 1=BTN_1, 2=BTN_2, ...) |
 | `press-hold` | int | -1 | Button triggered by tap-and-hold (-1=disabled, 0=BTN_0, 1=BTN_1, 2=BTN_2. ...)|
 | `scroll_layer` | int | -1 | Layer activated while first touching scroll slider area (-1=disabled, others=layer num) |
 | `scroll_start` | uint | 40 | Threshold/padding from right edge to activate scroll slider (max resolution 1024x/1024y) |
-| `rotate_cw` | uint | 0 | **CW Rotation angle to match physical placement** (0=0°, 1=90°, 2=180°, 3=270°). <br>Coordinates and scroll area are normalized internally. |
+| `rotate_cw` | uint | 0 | **CW Rotation angle to match physical placement** (0=0°, 1=90°, 2=180°, 3=270°). Coordinates and scroll area are normalized internally. |
 | `report-abs` | boolean | false | If true, report absolute coordinates instead of relative ones. |
 
 ### 2.1 Absolute Pointer Report Mode
