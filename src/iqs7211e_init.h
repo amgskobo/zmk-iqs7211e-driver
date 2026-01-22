@@ -10,16 +10,16 @@
 
 /* ALP ATI Compensation */
 /* Memory Map Position 0x1F - 0x20 */
-#define ALP_COMPENSATION_A_0                     0x7C
-#define ALP_COMPENSATION_A_1                     0x0C
-#define ALP_COMPENSATION_B_0                     0xC4
-#define ALP_COMPENSATION_B_1                     0x03
+#define ALP_COMPENSATION_A_0                     0x51
+#define ALP_COMPENSATION_A_1                     0x01
+#define ALP_COMPENSATION_B_0                     0x5A
+#define ALP_COMPENSATION_B_1                     0x01
 
 /* ATI Settings */
 /* Memory Map Position 0x21 - 0x27 */
-#define TP_ATI_MULTIPLIERS_DIVIDERS_0            0x81
-#define TP_ATI_MULTIPLIERS_DIVIDERS_1            0x0A
-#define TP_COMPENSATION_DIV                      0x05
+#define TP_ATI_MULTIPLIERS_DIVIDERS_0            0xE1
+#define TP_ATI_MULTIPLIERS_DIVIDERS_1            0x21
+#define TP_COMPENSATION_DIV                      0x06
 #define TP_REF_DRIFT_LIMIT                       0x32
 #define TP_ATI_TARGET_0                          0x2C
 #define TP_ATI_TARGET_1                          0x01
@@ -36,14 +36,14 @@
 /* Memory Map Position 0x28 - 0x32 */
 #define ACTIVE_MODE_REPORT_RATE_0                0x0F
 #define ACTIVE_MODE_REPORT_RATE_1                0x00
-#define IDLE_TOUCH_MODE_REPORT_RATE_0            0x32
+#define IDLE_TOUCH_MODE_REPORT_RATE_0            0x40
 #define IDLE_TOUCH_MODE_REPORT_RATE_1            0x00
-#define IDLE_MODE_REPORT_RATE_0                  0x14
+#define IDLE_MODE_REPORT_RATE_0                  0x20
 #define IDLE_MODE_REPORT_RATE_1                  0x00
-#define LP1_MODE_REPORT_RATE_0                   0x50
+#define LP1_MODE_REPORT_RATE_0                   0x80
 #define LP1_MODE_REPORT_RATE_1                   0x00
-#define LP2_MODE_REPORT_RATE_0                   0xA0
-#define LP2_MODE_REPORT_RATE_1                   0x00
+#define LP2_MODE_REPORT_RATE_0                   0x00
+#define LP2_MODE_REPORT_RATE_1                   0x01
 #define ACTIVE_MODE_TIMEOUT_0                    0x0A
 #define ACTIVE_MODE_TIMEOUT_1                    0x00
 #define IDLE_TOUCH_MODE_TIMEOUT_0                0x3C
@@ -63,7 +63,7 @@
 #define SYSTEM_CONTROL_1                         0x00
 #define CONFIG_SETTINGS0                         0x2C
 #define CONFIG_SETTINGS1                         0x06
-#define OTHER_SETTINGS_0                         0x00
+#define OTHER_SETTINGS_0                         0x10
 #define OTHER_SETTINGS_1                         0x00
 
 /* ALP Settings */
@@ -96,8 +96,8 @@
 #define ALP_CONVERSION_FREQUENCY_UP_PASS_LENGTH  0x02
 #define ALP_CONVERSION_FREQUENCY_FRACTION_VALUE  0x1A
 #define TRACKPAD_HARDWARE_SETTINGS_0             0x03
-#define TRACKPAD_HARDWARE_SETTINGS_1             0x8C
-#define ALP_HARDWARE_SETTINGS_0                  0x67
+#define TRACKPAD_HARDWARE_SETTINGS_1             0x9C
+#define ALP_HARDWARE_SETTINGS_0                  0x23
 #define ALP_HARDWARE_SETTINGS_1                  0x9C
 
 /* Trackpad Settings */
@@ -110,26 +110,26 @@
 #define X_RESOLUTION_1                           0x04
 #define Y_RESOLUTION_0                           0x00
 #define Y_RESOLUTION_1                           0x04
-#define XY_DYNAMIC_FILTER_BOTTOM_SPEED_0         0x06
+#define XY_DYNAMIC_FILTER_BOTTOM_SPEED_0         0x02
 #define XY_DYNAMIC_FILTER_BOTTOM_SPEED_1         0x00
-#define XY_DYNAMIC_FILTER_TOP_SPEED_0            0x7C
+#define XY_DYNAMIC_FILTER_TOP_SPEED_0            0x10
 #define XY_DYNAMIC_FILTER_TOP_SPEED_1            0x00
-#define XY_DYNAMIC_FILTER_BOTTOM_BETA            0x07
-#define XY_DYNAMIC_FILTER_STATIC_FILTER_BETA     0x80
-#define STATIONARY_TOUCH_MOV_THRESHOLD           0x14
+#define XY_DYNAMIC_FILTER_BOTTOM_BETA            0x01
+#define XY_DYNAMIC_FILTER_STATIC_FILTER_BETA     0x00
+#define STATIONARY_TOUCH_MOV_THRESHOLD           0x1E
 #define FINGER_SPLIT_FACTOR                      0x03
 #define X_TRIM_VALUE                             0x14
 #define Y_TRIM_VALUE                             0x14
 
 /* Settings Version Numbers */
 /* Memory Map Position 0x4A - 0x4A */
-#define MINOR_VERSION                            0x00
+#define MINOR_VERSION                            0x01
 #define MAJOR_VERSION                            0x00
 
 /* Gesture Settings */
 /* Memory Map Position 0x4B - 0x55 */
 #define GESTURE_ENABLE_0                         0x1F
-#define GESTURE_ENABLE_1                         0xFF
+#define GESTURE_ENABLE_1                         0x00
 #define TAP_TOUCH_TIME_0                         0x96
 #define TAP_TOUCH_TIME_1                         0x00
 #define TAP_WAIT_TIME_0                          0x96
