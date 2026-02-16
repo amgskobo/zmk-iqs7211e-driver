@@ -140,5 +140,6 @@ struct iqs7211e_data
     uint16_t finger_1_prev_y;
     int16_t finger_1_prev_dx;
     int16_t finger_1_prev_dy;
+    bool last_touched_state;
     struct k_work_sync work_sync;
 };

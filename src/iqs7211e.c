@@ -846,7 +846,12 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
     int16_t smooth_dy = (dy + data->finger_1_prev_dy) >> 1;
 
     /* 4. Input Reporting and Synchronization */
-    input_report_key(data->dev, INPUT_BTN_TOUCH, num_fingers > 0, false, K_FOREVER);
+    bool is_touched = (num_fingers > 0);
+    if (is_touched != data->last_touched_state)
+    {
+        input_report_key(data->dev, INPUT_BTN_TOUCH, is_touched, false, K_FOREVER);
+        data->last_touched_state = is_touched;
+    }
 
     if (config->report_abs)
     {
@@ -944,6 +949,7 @@ static int iqs7211e_init(const struct device *dev)
     data->touch_count = 0;
     data->start_tap = 0;
     data->is_scroll_layer_active = false;
+    data->last_touched_state = false;
     data->dev = dev;
 
     k_work_init(&data->work, iqs7211e_work_handler);
@@ -967,6 +973,7 @@ static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action ac
         data->touch_count = 0;
         data->start_tap = 0;
         data->is_scroll_layer_active = false;
+        data->last_touched_state = false;
         LOG_DBG("IQS7211E device resumed ");
         return set_gpio_interrupt(dev, true);
     default:
