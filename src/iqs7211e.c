@@ -838,29 +838,35 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
         LOG_DBG("Scroll layer deactivated");
     }
 
-    /* 3. Minimalist Movement Calculation
-     * Initializing delta to 0 on the first frame (touch_count == 0) prevents cursor jumping.
-     */
+    /* 3. Movement Calculation */
     int16_t dx = (data->touch_count == 0) ? 0 : (x - data->finger_1_prev_x);
     int16_t dy = (data->touch_count == 0) ? 0 : (y - data->finger_1_prev_y);
 
-    // smooth_dx = (dx + data->finger_1_prev_dx) / 2;
     int16_t smooth_dx = (dx + data->finger_1_prev_dx) >> 1;
     int16_t smooth_dy = (dy + data->finger_1_prev_dy) >> 1;
 
-    if (num_fingers != 0)
+    /* 4. Input Reporting and Synchronization */
+    input_report_key(data->dev, INPUT_BTN_TOUCH, num_fingers > 0, false, K_FOREVER);
+
+    if (config->report_abs)
     {
-        if (config->report_abs)
+        /* Absolute mode: report coordinates and sync */
+        input_report_abs(data->dev, INPUT_ABS_X, x, false, K_FOREVER);
+        input_report_abs(data->dev, INPUT_ABS_Y, y, true, K_FOREVER);
+    }
+    else
+    {
+        /* Relative mode */
+        if (num_fingers > 0 && data->touch_count >= skip_count)
         {
-            // Absolute mode: report coordinates from first frame (no skip needed)
-            input_report_abs(data->dev, INPUT_ABS_X, x, false, K_FOREVER);
-            input_report_abs(data->dev, INPUT_ABS_Y, y, true, K_FOREVER);
-        }
-        else if (data->touch_count >= skip_count)
-        {
-            // Relative mode: skip first frame for smoothing initialization
+            /* Moving: report delta and sync */
             input_report_rel(data->dev, INPUT_REL_X, smooth_dx, false, K_FOREVER);
-            input_report_rel(data->dev, INPUT_REL_Y, smooth_dy, true, K_FOREVER); // sync=true
+            input_report_rel(data->dev, INPUT_REL_Y, smooth_dy, true, K_FOREVER);
+        }
+        else
+        {
+            /* Press, Release, or Skipping: sync BTN_TOUCH state with zero movement */
+            input_report_rel(data->dev, INPUT_REL_X, 0, true, K_FOREVER);
         }
     }
 
