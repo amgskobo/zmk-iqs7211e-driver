@@ -728,23 +728,27 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
     uint8_t gesture_event = iqs7211e_get_touchpad_event(data);
 
     /* 1. Canonicalize coordinates (Normalized to user orientation) */
-    int16_t x = data->finger_1_x;
-    int16_t y = data->finger_1_y;
+    /* If no fingers, use last known coordinates to avoid jump to (0,0) */
+    int16_t raw_x = (num_fingers > 0) ? data->finger_1_x : data->finger_1_prev_x;
+    int16_t raw_y = (num_fingers > 0) ? data->finger_1_y : data->finger_1_prev_y;
+
+    int16_t x = raw_x;
+    int16_t y = raw_y;
 
     if (config->rotate_cw == 1)
     {
-        x = (RESOLUTION_Y - 1) - data->finger_1_y;
-        y = data->finger_1_x;
+        x = (RESOLUTION_Y - 1) - raw_y;
+        y = raw_x;
     }
     else if (config->rotate_cw == 2)
     {
-        x = (RESOLUTION_X - 1) - data->finger_1_x;
-        y = (RESOLUTION_Y - 1) - data->finger_1_y;
+        x = (RESOLUTION_X - 1) - raw_x;
+        y = (RESOLUTION_Y - 1) - raw_y;
     }
     else if (config->rotate_cw == 3)
     {
-        x = data->finger_1_y;
-        y = (RESOLUTION_X - 1) - data->finger_1_x;
+        x = raw_y;
+        y = (RESOLUTION_X - 1) - raw_x;
     }
 
     LOG_DBG("Fingers: %d, Gesture: %d, Mode: %s", num_fingers, gesture_event, config->report_abs ? "Abs" : "Rel");
@@ -759,8 +763,17 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
     int16_t dx = 0, dy = 0, smooth_dx = 0, smooth_dy = 0;
     if (!config->report_abs)
     {
-        dx = (data->touch_count == 0 || num_fingers == 0) ? 0 : (x - data->finger_1_prev_x);
-        dy = (data->touch_count == 0 || num_fingers == 0) ? 0 : (y - data->finger_1_prev_y);
+        if (num_fingers > 0)
+        {
+            dx = (data->touch_count == 0) ? 0 : (x - data->finger_1_prev_x);
+            dy = (data->touch_count == 0) ? 0 : (y - data->finger_1_prev_y);
+        }
+        else
+        {
+            /* On release, maintain last velocity for inertia initialization */
+            dx = data->finger_1_prev_dx;
+            dy = data->finger_1_prev_dy;
+        }
 
         smooth_dx = (dx + data->finger_1_prev_dx) >> 1;
         smooth_dy = (dy + data->finger_1_prev_dy) >> 1;
@@ -929,7 +942,9 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
         }
         else
         {
-            input_report_rel(data->dev, INPUT_REL_X, 0, true, K_FOREVER);
+            /* Sync OFF state with final movement deltas for inertia */
+            input_report_rel(data->dev, INPUT_REL_X, smooth_dx, false, K_FOREVER);
+            input_report_rel(data->dev, INPUT_REL_Y, smooth_dy, true, K_FOREVER);
         }
 
         /* 4.4. Scroll Layer Cleanup (At the very end of switching) */
