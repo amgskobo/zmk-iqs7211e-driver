@@ -755,12 +755,16 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
     // Skip first frame setup for smoothing
     uint8_t skip_count = 1;
 
-    /* 2. Movement Calculation */
-    int16_t dx = (data->touch_count == 0 || num_fingers == 0) ? 0 : (x - data->finger_1_prev_x);
-    int16_t dy = (data->touch_count == 0 || num_fingers == 0) ? 0 : (y - data->finger_1_prev_y);
+    /* 2. Movement Calculation (Only for relative mode) */
+    int16_t dx = 0, dy = 0, smooth_dx = 0, smooth_dy = 0;
+    if (!config->report_abs)
+    {
+        dx = (data->touch_count == 0 || num_fingers == 0) ? 0 : (x - data->finger_1_prev_x);
+        dy = (data->touch_count == 0 || num_fingers == 0) ? 0 : (y - data->finger_1_prev_y);
 
-    int16_t smooth_dx = (dx + data->finger_1_prev_dx) >> 1;
-    int16_t smooth_dy = (dy + data->finger_1_prev_dy) >> 1;
+        smooth_dx = (dx + data->finger_1_prev_dx) >> 1;
+        smooth_dy = (dy + data->finger_1_prev_dy) >> 1;
+    }
 
     /* 3. Input Reporting and Synchronization */
     if (num_fingers > 0)
@@ -945,8 +949,11 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
     /* 5. Common History Update */
     data->finger_1_prev_x = x;
     data->finger_1_prev_y = y;
-    data->finger_1_prev_dx = dx;
-    data->finger_1_prev_dy = dy;
+    if (!config->report_abs)
+    {
+        data->finger_1_prev_dx = dx;
+        data->finger_1_prev_dy = dy;
+    }
 }
 
 static int set_gpio_interrupt(const struct device *dev, const bool en)
