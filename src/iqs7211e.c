@@ -755,166 +755,198 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
     // Skip first frame setup for smoothing
     uint8_t skip_count = 1;
 
-    // 2. Simplified Scroll layer detection (uses normalized coordinates)
-    // Check during first 3 frames (0,1,2) independent of skip_count used for cursor smoothing
-    if (num_fingers != 0 &&
-        data->touch_count <= 2 &&
-        config->scroll_layer >= 0 &&
-        !data->is_scroll_layer_active)
-    {
-        // For normalized coordinates, the scroll area is always at the right edge
-        if (x > (RESOLUTION_X - 1) - config->scroll_start)
-        {
-            zmk_keymap_layer_activate(config->scroll_layer, false);
-            data->is_scroll_layer_active = true;
-            LOG_DBG("Scroll layer activated");
-        }
-    }
-
-    if (!data->is_scroll_layer_active)
-    {
-        /*
-         * Synchronous Multi-Click Reporting:
-         * Uses k_msleep to create a reliable pulse (press -> 50ms -> release).
-         * This ensures the host OS consistently registers the inputs as distinct click events.
-         */
-        switch (gesture_event)
-        {
-        case IQS7211E_GESTURE_SINGLE_TAP:
-            if (config->single_tap >= 0)
-            {
-                input_report_key(data->dev, INPUT_BTN_0 + config->single_tap, true, true, K_FOREVER);
-                k_msleep(20);
-                input_report_key(data->dev, INPUT_BTN_0 + config->single_tap, false, true, K_FOREVER);
-            }
-            break;
-        case IQS7211E_GESTURE_DOUBLE_TAP:
-            if (config->double_tap >= 0)
-            {
-                for (int i = 0; i < 2; i++)
-                {
-                    input_report_key(data->dev, INPUT_BTN_0 + config->double_tap, true, true, K_FOREVER);
-                    k_msleep(20);
-                    input_report_key(data->dev, INPUT_BTN_0 + config->double_tap, false, true, K_FOREVER);
-                    k_msleep(20);
-                }
-            }
-            break;
-        case IQS7211E_GESTURE_TRIPLE_TAP:
-            if (config->triple_tap >= 0)
-            {
-                for (int i = 0; i < 3; i++)
-                {
-                    input_report_key(data->dev, INPUT_BTN_0 + config->triple_tap, true, true, K_FOREVER);
-                    k_msleep(20);
-                    input_report_key(data->dev, INPUT_BTN_0 + config->triple_tap, false, true, K_FOREVER);
-                    k_msleep(20);
-                }
-            }
-            break;
-        case IQS7211E_GESTURE_PRESS_HOLD:
-            if (config->press_hold >= 0 && data->start_tap == 0)
-            {
-                input_report_key(data->dev, INPUT_BTN_0 + config->press_hold, true, true, K_FOREVER);
-                data->start_tap = 1;
-            }
-            break;
-        default:
-            break;
-        }
-
-        if (num_fingers == 0 && data->start_tap == 1)
-        {
-            input_report_key(data->dev, INPUT_BTN_0 + config->press_hold, false, true, K_FOREVER);
-            data->start_tap = 0;
-        }
-    }
-
-    // Deactivate scroll layer
-    if (num_fingers == 0 && data->is_scroll_layer_active)
-    {
-        zmk_keymap_layer_deactivate(config->scroll_layer, false);
-        data->is_scroll_layer_active = false;
-        LOG_DBG("Scroll layer deactivated");
-    }
-
-    /* 3. Movement Calculation */
-    int16_t dx = (data->touch_count == 0) ? 0 : (x - data->finger_1_prev_x);
-    int16_t dy = (data->touch_count == 0) ? 0 : (y - data->finger_1_prev_y);
+    /* 2. Movement Calculation */
+    int16_t dx = (data->touch_count == 0 || num_fingers == 0) ? 0 : (x - data->finger_1_prev_x);
+    int16_t dy = (data->touch_count == 0 || num_fingers == 0) ? 0 : (y - data->finger_1_prev_y);
 
     int16_t smooth_dx = (dx + data->finger_1_prev_dx) >> 1;
     int16_t smooth_dy = (dy + data->finger_1_prev_dy) >> 1;
 
-    /* 4. Input Reporting and Synchronization */
+    /* 3. Input Reporting and Synchronization */
     if (num_fingers > 0)
     {
-        /* --- Touch Active --- */
+        /* --- Path: Touch Active --- */
+
+        /* 3.1. Touch State Toggle */
         if (!data->last_touched_state)
         {
             input_report_key(data->dev, INPUT_BTN_TOUCH, true, false, K_FOREVER);
             data->last_touched_state = true;
         }
 
+        /* 3.2. Scroll Layer Detection */
+        if (data->touch_count <= 2 && config->scroll_layer >= 0 && !data->is_scroll_layer_active)
+        {
+            if (x > (RESOLUTION_X - 1) - config->scroll_start)
+            {
+                zmk_keymap_layer_activate(config->scroll_layer, false);
+                data->is_scroll_layer_active = true;
+                LOG_DBG("Scroll layer activated");
+            }
+        }
+
+        /* 3.3. Gesture / Button Processing (Skip if scrolling) */
+        if (!data->is_scroll_layer_active)
+        {
+            switch (gesture_event)
+            {
+            case IQS7211E_GESTURE_PRESS_HOLD:
+                if (config->press_hold >= 0 && data->start_tap == 0)
+                {
+                    input_report_key(data->dev, INPUT_BTN_0 + config->press_hold, true, true, K_FOREVER);
+                    data->start_tap = 1;
+                }
+                break;
+            case IQS7211E_GESTURE_SINGLE_TAP:
+                if (config->single_tap >= 0)
+                {
+                    input_report_key(data->dev, INPUT_BTN_0 + config->single_tap, true, true, K_FOREVER);
+                    k_msleep(20);
+                    input_report_key(data->dev, INPUT_BTN_0 + config->single_tap, false, true, K_FOREVER);
+                }
+                break;
+            case IQS7211E_GESTURE_DOUBLE_TAP:
+                if (config->double_tap >= 0)
+                {
+                    for (int i = 0; i < 2; i++)
+                    {
+                        input_report_key(data->dev, INPUT_BTN_0 + config->double_tap, true, true, K_FOREVER);
+                        k_msleep(20);
+                        input_report_key(data->dev, INPUT_BTN_0 + config->double_tap, false, true, K_FOREVER);
+                        k_msleep(20);
+                    }
+                }
+                break;
+            case IQS7211E_GESTURE_TRIPLE_TAP:
+                if (config->triple_tap >= 0)
+                {
+                    for (int i = 0; i < 3; i++)
+                    {
+                        input_report_key(data->dev, INPUT_BTN_0 + config->triple_tap, true, true, K_FOREVER);
+                        k_msleep(20);
+                        input_report_key(data->dev, INPUT_BTN_0 + config->triple_tap, false, true, K_FOREVER);
+                        k_msleep(20);
+                    }
+                }
+                break;
+            default:
+                break;
+            }
+        }
+
+        /* 3.4. Coordinate Reporting */
         if (config->report_abs)
         {
-            /* Absolute mode: report coordinates and sync */
             input_report_abs(data->dev, INPUT_ABS_X, x, false, K_FOREVER);
             input_report_abs(data->dev, INPUT_ABS_Y, y, true, K_FOREVER);
         }
+        else if (data->touch_count >= skip_count)
+        {
+            input_report_rel(data->dev, INPUT_REL_X, smooth_dx, false, K_FOREVER);
+            input_report_rel(data->dev, INPUT_REL_Y, smooth_dy, true, K_FOREVER);
+        }
         else
         {
-            /* Relative mode */
-            if (data->touch_count >= skip_count)
-            {
-                /* Moving: report delta and sync */
-                input_report_rel(data->dev, INPUT_REL_X, smooth_dx, false, K_FOREVER);
-                input_report_rel(data->dev, INPUT_REL_Y, smooth_dy, true, K_FOREVER);
-            }
-            else
-            {
-                /* First frame: sync ON state with zero movement */
-                input_report_rel(data->dev, INPUT_REL_X, 0, true, K_FOREVER);
-            }
+            /* First frame: sync ON state with zero movement */
+            input_report_rel(data->dev, INPUT_REL_X, 0, true, K_FOREVER);
+        }
+
+        /* 3.5. Update History */
+        if (data->touch_count < 255)
+        {
+            data->touch_count++;
         }
     }
     else
     {
-        /* --- Touch Released --- */
+        /* --- Path: Touch Released --- */
+
+        /* 4.1. Touch State Toggle */
         if (data->last_touched_state)
         {
             input_report_key(data->dev, INPUT_BTN_TOUCH, false, false, K_FOREVER);
             data->last_touched_state = false;
         }
 
+        /* 4.2. Process Release Gestures (Taps, etc.) - Only if not scrolling */
+        if (!data->is_scroll_layer_active)
+        {
+            switch (gesture_event)
+            {
+            case IQS7211E_GESTURE_SINGLE_TAP:
+                if (config->single_tap >= 0)
+                {
+                    input_report_key(data->dev, INPUT_BTN_0 + config->single_tap, true, true, K_FOREVER);
+                    k_msleep(20);
+                    input_report_key(data->dev, INPUT_BTN_0 + config->single_tap, false, true, K_FOREVER);
+                }
+                break;
+            case IQS7211E_GESTURE_DOUBLE_TAP:
+                if (config->double_tap >= 0)
+                {
+                    for (int i = 0; i < 2; i++)
+                    {
+                        input_report_key(data->dev, INPUT_BTN_0 + config->double_tap, true, true, K_FOREVER);
+                        k_msleep(20);
+                        input_report_key(data->dev, INPUT_BTN_0 + config->double_tap, false, true, K_FOREVER);
+                        k_msleep(20);
+                    }
+                }
+                break;
+            case IQS7211E_GESTURE_TRIPLE_TAP:
+                if (config->triple_tap >= 0)
+                {
+                    for (int i = 0; i < 3; i++)
+                    {
+                        input_report_key(data->dev, INPUT_BTN_0 + config->triple_tap, true, true, K_FOREVER);
+                        k_msleep(20);
+                        input_report_key(data->dev, INPUT_BTN_0 + config->triple_tap, false, true, K_FOREVER);
+                        k_msleep(20);
+                    }
+                }
+                break;
+            default:
+                break;
+            }
+        }
+
+        /* 4.3. Release press-hold if active (Always do this on lift-off) */
+        if (data->start_tap == 1)
+        {
+            input_report_key(data->dev, INPUT_BTN_0 + config->press_hold, false, true, K_FOREVER);
+            data->start_tap = 0;
+        }
+
+        /* 4.4. Reporting and Sync */
         if (config->report_abs)
         {
-            /* Absolute mode: report final position on release and sync */
             input_report_abs(data->dev, INPUT_ABS_X, x, false, K_FOREVER);
             input_report_abs(data->dev, INPUT_ABS_Y, y, true, K_FOREVER);
         }
         else
         {
-            /* Sync OFF state with zero movement */
             input_report_rel(data->dev, INPUT_REL_X, 0, true, K_FOREVER);
         }
-    }
 
-    /* 4. Update History */
-    data->finger_1_prev_x = x;
-    data->finger_1_prev_y = y;
-    data->finger_1_prev_dx = dx;
-    data->finger_1_prev_dy = dy;
+        /* 4.4. Scroll Layer Cleanup (At the very end of switching) */
+        if (data->is_scroll_layer_active)
+        {
+            zmk_keymap_layer_deactivate(config->scroll_layer, false);
+            data->is_scroll_layer_active = false;
+            LOG_DBG("Scroll layer deactivated");
+        }
 
-    if (num_fingers == 0)
-    {
+        /* 4.5. Update History */
         data->touch_count = 0;
         data->finger_1_prev_dx = 0;
         data->finger_1_prev_dy = 0;
     }
-    else if (data->touch_count < 255)
-    {
-        data->touch_count++;
-    }
+
+    /* 5. Common History Update */
+    data->finger_1_prev_x = x;
+    data->finger_1_prev_y = y;
+    data->finger_1_prev_dx = dx;
+    data->finger_1_prev_dy = dy;
 }
 
 static int set_gpio_interrupt(const struct device *dev, const bool en)
