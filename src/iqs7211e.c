@@ -846,31 +846,55 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
     int16_t smooth_dy = (dy + data->finger_1_prev_dy) >> 1;
 
     /* 4. Input Reporting and Synchronization */
-    bool is_touched = (num_fingers > 0);
-    if (is_touched != data->last_touched_state)
+    if (num_fingers > 0)
     {
-        input_report_key(data->dev, INPUT_BTN_TOUCH, is_touched, false, K_FOREVER);
-        data->last_touched_state = is_touched;
-    }
-
-    if (config->report_abs)
-    {
-        /* Absolute mode: report coordinates and sync */
-        input_report_abs(data->dev, INPUT_ABS_X, x, false, K_FOREVER);
-        input_report_abs(data->dev, INPUT_ABS_Y, y, true, K_FOREVER);
-    }
-    else
-    {
-        /* Relative mode */
-        if (num_fingers > 0 && data->touch_count >= skip_count)
+        /* --- Touch Active --- */
+        if (!data->last_touched_state)
         {
-            /* Moving: report delta and sync */
-            input_report_rel(data->dev, INPUT_REL_X, smooth_dx, false, K_FOREVER);
-            input_report_rel(data->dev, INPUT_REL_Y, smooth_dy, true, K_FOREVER);
+            input_report_key(data->dev, INPUT_BTN_TOUCH, true, false, K_FOREVER);
+            data->last_touched_state = true;
+        }
+
+        if (config->report_abs)
+        {
+            /* Absolute mode: report coordinates and sync */
+            input_report_abs(data->dev, INPUT_ABS_X, x, false, K_FOREVER);
+            input_report_abs(data->dev, INPUT_ABS_Y, y, true, K_FOREVER);
         }
         else
         {
-            /* Press, Release, or Skipping: sync BTN_TOUCH state with zero movement */
+            /* Relative mode */
+            if (data->touch_count >= skip_count)
+            {
+                /* Moving: report delta and sync */
+                input_report_rel(data->dev, INPUT_REL_X, smooth_dx, false, K_FOREVER);
+                input_report_rel(data->dev, INPUT_REL_Y, smooth_dy, true, K_FOREVER);
+            }
+            else
+            {
+                /* First frame: sync ON state with zero movement */
+                input_report_rel(data->dev, INPUT_REL_X, 0, true, K_FOREVER);
+            }
+        }
+    }
+    else
+    {
+        /* --- Touch Released --- */
+        if (data->last_touched_state)
+        {
+            input_report_key(data->dev, INPUT_BTN_TOUCH, false, false, K_FOREVER);
+            data->last_touched_state = false;
+        }
+
+        if (config->report_abs)
+        {
+            /* Absolute mode: report final position on release and sync */
+            input_report_abs(data->dev, INPUT_ABS_X, x, false, K_FOREVER);
+            input_report_abs(data->dev, INPUT_ABS_Y, y, true, K_FOREVER);
+        }
+        else
+        {
+            /* Sync OFF state with zero movement */
             input_report_rel(data->dev, INPUT_REL_X, 0, true, K_FOREVER);
         }
     }
