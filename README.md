@@ -1,32 +1,44 @@
 # zmk-iqs7211e-driver
+
+[[日本語]](README_JA.md)
+
 <img src=/img/iqs7211e_trackpad01.png width="500px" />
 
 ## 1. Overview
+
 This repository provides a driver for the **"Trackpad01"** (Azoteq IQS7211E touch/proximity sensor chip) for ZMK (Zephyr Mechanical Keyboard firmware). It has been verified with **Zephyr 4.1**.
 The driver is inspired by the [ZMK PMW3610 driver](https://github.com/inorichi/zmk-pmw3610-driver). While the IQS7211E chip itself supports full 2 fingers input, this small trackpad module **(padsize is 22mmX22mm)** only supports single-finger gestures. Supports standard ZMK interrupt-driven input, enabling responsive event handling.
 
 The driver also implements touch gesture and scroll slider features:
+
 - Single-tap / Double-tap / Triple-tap
 - Tap & Hold
 - Scroll slider (right-edge area)
   - Activates a specified layer while touching (`scroll_layer = <1>` is generally used)
   - Releases to off the layer
-- Rotation correction for flexible physical placement
+- Precise rotation correction (`rotate_cw`) for flexible physical placement, including automatic slider area adjustment. **Eliminates the need for manual rotation/flipping in input processors.**
+- "Ultimate Quality" Rigor: Implemented mathematical boundary fixes (Off-by-one) and safe PM (Power Management) execution guards.
 
 ## 2. Device Tree Properties
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `reg` | byte  | 0x56 | I2C address of the device (required)  |
-| `irq-gpios` | phandle-array |  | Interrupt pin (required)|
+| `reg` | byte | 0x56 | I2C address of the device (required) |
+| `irq-gpios` | phandle-array | | Interrupt pin (required)|
 | `single-tap` | int | -1 | Button triggered by single-tap (-1=disabled, 0=BTN_0, 1=BTN_1, 2=BTN_2, ...) |
 | `double-tap` | int | -1 | Button triggered by double-tap (-1=disabled, 0=BTN_0, 1=BTN_1, 2=BTN_2, ...) |
 | `triple-tap` | int | -1 | Button triggered by triple-tap (-1=disabled, 0=BTN_0, 1=BTN_1, 2=BTN_2, ...) |
 | `press-hold` | int | -1 | Button triggered by tap-and-hold (-1=disabled, 0=BTN_0, 1=BTN_1, 2=BTN_2. ...)|
 | `scroll_layer` | int | -1 | Layer activated while first touching scroll slider area (-1=disabled, others=layer num) |
-| `scroll_start` | uint | 40 | Threshold/padding from right edge to activate scroll slider (max resolution 1024x/1024y) |
-| `rotate_cw` | uint | 0 | Rotation angle for scroll slider area **Clockwise** (0=0°, 1=90°, 2=180°, 3=270°) |
+| `scroll_start` | uint | 40 | Threshold/padding from right edge to activate scroll slider (resolution 0-1024x/0-1024y) |
+| `rotate_cw` | uint | 0 | **CW Rotation angle to match physical placement** (0=0°, 1=90°, 2=180°, 3=270°). Coordinates and scroll area are normalized internally. |
+| `report-abs` | boolean | false | If true, report absolute coordinates instead of relative ones. |
 
+### 2.1 Absolute Pointer Report Mode
+
+By default, this driver reports relative coordinates (`INPUT_REL_X`, `INPUT_REL_Y`). By setting `report-abs;` in the Device Tree, it will switch to absolute coordinates (`INPUT_ABS_X`, `INPUT_ABS_Y`).
+This is useful when combined with ZMK input processors that expect absolute data, such as a digitizer-to-mouse converter.
+The absolute coordinates are reported in the range of 0 to 1024 (as defined by the chip's resolution).
 
 ## 3. Installation (GitHub Actions)
 
@@ -105,86 +117,53 @@ Add the IQS7211E node in your keyboard DTS overlay file (example of XIAO_BLE boa
         scroll_layer = <1>;
         scroll_start = <27>;
         rotate_cw = <0>;
+        // report-abs; // Use absolute coordinates (0-1024)
     };
 };
 
+```dts
 / {
     trackpad_input_listener: trackpad_input_listener {
         compatible = "zmk,input-listener";
         status = "okay";
         device = <&iqs7211e>;
-        /* Scroll slider settings with using custom input-processors */
+        /* No need for zip_xy_transform here as rotation is handled by the driver */
+        input-processors = <&zip_xy_scaler 1 1>; 
         scroller {
             layers = <1>;
             input-processors = <&zip_xy_scaler 1 20>, 
-                               <&zip_xy_transform (INPUT_TRANSFORM_Y_INVERT)>,
                                <&zip_xy_to_scroll_mapper>;
         };
     };
 };
 ```
+
+Since the coordinates are already corrected inside the driver based on `rotate_cw`, you don't need to specify `zip_xy_transform` or `zip_xy_swap_mapper` in the listener. Focus only on sensitivity and inertia.
+
 Option: rotate 90 deg (rotate_cw = <1>)
-```
-/ {
-    trackpad_input_listener: trackpad_input_listener {
-        compatible = "zmk,input-listener";
-        status = "okay";
-        device = <&iqs7211e>;
-        input-processors = <&zip_xy_transform (INPUT_TRANSFORM_Y_INVERT)>,
-                           <&zip_xy_swap_mapper>;
-        scroller {
-            layers = <1>;
-            input-processors = <&zip_xy_transform (INPUT_TRANSFORM_X_INVERT | INPUT_TRANSFORM_Y_INVERT)>,
-                               <&zip_xy_swap_mapper>,
-                               <&zip_xy_scaler 1 20>, 
-                               <&zip_xy_to_scroll_mapper>;
-        };
-    };
-};
-```
-Option: rotate 180 deg (rotate_cw = <2>)
-```
-/ {
 
-    trackpad_input_listener: trackpad_input_listener {
-        compatible = "zmk,input-listener";
-        status = "okay";
-        device = <&iqs7211e>;
-        input-processors = <&zip_xy_transform (INPUT_TRANSFORM_X_INVERT | INPUT_TRANSFORM_Y_INVERT)>;
-        scroller {
-            layers = <1>;
-            input-processors = <&zip_xy_transform (INPUT_TRANSFORM_X_INVERT)>,
-                               <&zip_xy_scaler 1 20>, 
-                               <&zip_xy_to_scroll_mapper>;
-        };
-    };
-};
-```
-Option: rotate 270 deg (rotate_cw = <3>)
-```
+```dts
 / {
-
     trackpad_input_listener: trackpad_input_listener {
         compatible = "zmk,input-listener";
         status = "okay";
         device = <&iqs7211e>;
-        input-processors = <&zip_xy_transform (INPUT_TRANSFORM_X_INVERT)>,
-                           <&zip_xy_swap_mapper>;
+        /* Driver handles the rotation; processors handle the performance/feel */
+        input-processors = <&zip_xy_scaler 1 1>; 
         scroller {
             layers = <1>;
-            input-processors = <&zip_xy_swap_mapper>,
-                               <&zip_xy_scaler 1 20>, 
+            input-processors = <&zip_xy_scaler 1 20>, 
                                <&zip_xy_to_scroll_mapper>;
         };
     };
 };
 ```
 
-### 3.3 Optional: Enable Driver in Kconfig
+### 3.3 Enable Driver in Kconfig
 
-If required, add the driver to your `board.conf`:
+Add the driver to your `board.conf`:
 
-```
+```kconfig
 CONFIG_I2C=y
 CONFIG_GPIO=y
 CONFIG_INPUT=y
@@ -200,23 +179,26 @@ The GitHub Actions workflow automatically builds the firmware and generates arti
 ## 4. HW and Dimensions
 
 ### 4.1 Trackpad01 Front view (HASL)
+
 <img src=/img/iqs7211e_trackpad01_front.png width="500px" />
 
 ### 4.2 Trackpad01 Back view (HASL)
 
 <img src=/img/iqs7211e_trackpad01_back.png width="500px" />
 
-### 4.3 Pin Assignment (all +3V3 logic) 
+### 4.3 Pin Assignment (all +3V3 logic)
+
 | PIN | value | info |
 |-----|-------|------|
 |1  |  GND |  - |
 |2  |  GND |  - |
 |3  |  RDY | irq interrupt pin |
 |4  |  +3V3 | VDD |
-|5  |  SDA | i2c data| 
+|5  |  SDA | i2c data|
 |6  |  SCL | i2c clock |
 
 ### 4.4 BOMs
+
 | Property | Value | Type | Qty | Link |
 |----------|------|---------|-------------|-----|
 | `C1,C3,C5` | 100pF | 0805_SMD | 3 | |
@@ -228,6 +210,7 @@ The GitHub Actions workflow automatically builds the firmware and generates arti
 | `U1` | IQS7211E001QNR |  IQS7211E001QNR(20-QFN)| 1| [digikey](https://www.digikey.jp/en/products/detail/azoteq-pty-ltd/IQS7211E001QNR/18627341)|
 
 ### 4.5 PCB Specifications
+
 The PCB used with this driver is a 2-layer FR4 board with a standard thickness of 1.6 mm. The recommended finish for the PCB is ENIG (Electroless Nickel Immersion Gold).
 
 The ENIG finish provides high durability for the edges of the trackpad and connector areas, allowing for long-term stable use. In addition, the gold layer prevents oxidation, ensuring stable touch sensitivity and response.
@@ -235,20 +218,23 @@ The ENIG finish provides high durability for the edges of the trackpad and conne
 Please note that if the PCB thickness is different from 1.6 mm, it may affect the installation and feel of the trackpad. Also, the ENIG finish may incur higher costs compared to standard finishes.
 
 ### 4.6 Trackpad Surface Material
+
 Make sure to attach some kind of material to the trackpad surface.
-The trackpad will not function properly if used without any material attached. 
+The trackpad will not function properly if used without any material attached.
 Typically, we recommend a film thickness of 1-2 mm.
 
 ### 4.7 TP Configuration Examples
 
-You can modify the sensor behavior by editing the `src/IQS7211E_init.h` file provided by Azoteq. This file contains all necessary initialization and gesture settings.
+You can modify the sensor behavior by editing the `src/iqs7211e_init.h` file provided by Azoteq. This file contains all necessary initialization and gesture settings.
 Edit values here to adjust:
+
 - Gesture timing, thresholds, and distances
 - Report rates and timeouts
 - Hardware and ALP settings
 - Channel allocation and cycles
 
 For more details, looking at the datasheet&references:
+
 - [iqs7211e_datasheet](/docs/iqs7211e_datasheet.pdf)
 - [azd123_iqs721xy_trackpad_userguide](/docs/azd123_iqs721xy_trackpad_userguide.pdf)
 - [azd128-gamepad-trackpad-design-guide_v1.0](/docs/azd128-gamepad-trackpad-design-guide_v1.0.pdf)

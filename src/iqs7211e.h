@@ -58,8 +58,8 @@
 #define IQS7211E_GESTURE_SWIPE_HOLD_Y_POSITIVE_BIT 6 // 14
 #define IQS7211E_GESTURE_SWIPE_HOLD_Y_NEGATIVE_BIT 7 // 15
 
-#define RESOLUTION_X 1024
-#define RESOLUTION_Y 1024
+#define RESOLUTION_X 1025
+#define RESOLUTION_Y 1025
 
 enum iqs7211e_init_state
 {
@@ -117,6 +117,7 @@ struct iqs7211e_config
     int8_t scroll_layer;
     uint16_t scroll_start;
     uint8_t rotate_cw;
+    bool report_abs;
 };
 
 struct iqs7211e_data
@@ -139,4 +140,6 @@ struct iqs7211e_data
     uint16_t finger_1_prev_y;
     int16_t finger_1_prev_dx;
     int16_t finger_1_prev_dy;
+    bool last_touched_state;
+    struct k_work_sync work_sync;
 };
