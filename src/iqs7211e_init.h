@@ -38,12 +38,12 @@
 #define ACTIVE_MODE_REPORT_RATE_1                0x00
 #define IDLE_TOUCH_MODE_REPORT_RATE_0            0x0F
 #define IDLE_TOUCH_MODE_REPORT_RATE_1            0x00
-#define IDLE_MODE_REPORT_RATE_0                  0x0F
+#define IDLE_MODE_REPORT_RATE_0                  0x1E
 #define IDLE_MODE_REPORT_RATE_1                  0x00
-#define LP1_MODE_REPORT_RATE_0                   0x80
+#define LP1_MODE_REPORT_RATE_0                   0x4B
 #define LP1_MODE_REPORT_RATE_1                   0x00
-#define LP2_MODE_REPORT_RATE_0                   0x00
-#define LP2_MODE_REPORT_RATE_1                   0x01
+#define LP2_MODE_REPORT_RATE_0                   0xC8
+#define LP2_MODE_REPORT_RATE_1                   0x00
 #define ACTIVE_MODE_TIMEOUT_0                    0x0A
 #define ACTIVE_MODE_TIMEOUT_1                    0x00
 #define IDLE_TOUCH_MODE_TIMEOUT_0                0x3C
