@@ -737,18 +737,33 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
 
     if (config->rotate_cw == 1)
     {
-        x = (RESOLUTION_Y - 1) - raw_y;
+        /* 
+         * Rotation 90deg CW: 
+         * X = (MaxY) - raw_y
+         * Y = raw_x
+         */
+        x = RESOLUTION_Y - raw_y;
         y = raw_x;
     }
     else if (config->rotate_cw == 2)
     {
-        x = (RESOLUTION_X - 1) - raw_x;
-        y = (RESOLUTION_Y - 1) - raw_y;
+        /* 
+         * Rotation 180deg CW: 
+         * X = (MaxX) - raw_x
+         * Y = (MaxY) - raw_y
+         */
+        x = RESOLUTION_X - raw_x;
+        y = RESOLUTION_Y - raw_y;
     }
     else if (config->rotate_cw == 3)
     {
+        /* 
+         * Rotation 270deg CW: 
+         * X = raw_y
+         * Y = (MaxX) - raw_x
+         */
         x = raw_y;
-        y = (RESOLUTION_X - 1) - raw_x;
+        y = RESOLUTION_X - raw_x;
     }
 
     LOG_DBG("Fingers: %d, Gesture: %d, Mode: %s", num_fingers, gesture_event, config->report_abs ? "Abs" : "Rel");
@@ -794,7 +809,8 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
         /* 3.2. Scroll Layer Detection */
         if (data->touch_count <= 2 && config->scroll_layer >= 0 && !data->is_scroll_layer_active)
         {
-            if (x > (RESOLUTION_X - 1) - config->scroll_start)
+            /* Compare against MaxX - padding */
+            if (x > RESOLUTION_X - config->scroll_start)
             {
                 zmk_keymap_layer_activate(config->scroll_layer, false);
                 data->is_scroll_layer_active = true;

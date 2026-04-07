@@ -58,8 +58,13 @@
 #define IQS7211E_GESTURE_SWIPE_HOLD_Y_POSITIVE_BIT 6 // 14
 #define IQS7211E_GESTURE_SWIPE_HOLD_Y_NEGATIVE_BIT 7 // 15
 
-#define RESOLUTION_X 1025
-#define RESOLUTION_Y 1025
+/* 
+ * The output resolution is defined as the 'total output range' (Max Coordinate N).
+ * For a configuration of 1024, the chip reports coordinates from 0 to 1024 (Total 1025 points).
+ * See Datasheet Section 7.4 and 7.9 for the 'full 0 to 1000 range' example.
+ */
+#define RESOLUTION_X 1024
+#define RESOLUTION_Y 1024
 
 enum iqs7211e_init_state
 {

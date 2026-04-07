@@ -106,9 +106,9 @@
 #define TRACKPAD_SETTINGS_0_1                    0x05
 #define TRACKPAD_SETTINGS_1_0                    0x05
 #define TRACKPAD_SETTINGS_1_1                    0x02
-#define X_RESOLUTION_0                           0x00
+#define X_RESOLUTION_0                           0x00 // 1024 (Max Coordinate N)
 #define X_RESOLUTION_1                           0x04
-#define Y_RESOLUTION_0                           0x00
+#define Y_RESOLUTION_0                           0x00 // 1024 (Max Coordinate N)
 #define Y_RESOLUTION_1                           0x04
 #define XY_DYNAMIC_FILTER_BOTTOM_SPEED_0         0x02
 #define XY_DYNAMIC_FILTER_BOTTOM_SPEED_1         0x00

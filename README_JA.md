@@ -31,7 +31,7 @@
 | `triple-tap` | int | -1 | トリプルタップでトリガーされるボタン (-1=無効, 0=BTN_0, 1=BTN_1, ...) |
 | `press-hold` | int | -1 | タップ & ホールドでトリガーされるボタン (-1=無効, 0=BTN_0, 1=BTN_1, ...)|
 | `scroll_layer` | int | -1 | スクロールスライダーエリアをタッチした時にアクティブになるレイヤー (-1=無効, その他=レイヤー番号) |
-| `scroll_start` | uint | 40 | スクロールスライダーを有効にする右端からの閾値/パディング (解像度 0-1024x/0-1024y) |
+| `scroll_start` | uint | 40 | スクロールスライダーを有効にする右端からの閾値/パディング (解像度 0-1024、最大値を含む) |
 | `rotate_cw` | uint | 0 | **物理配置に合わせた時計回りの回転角度** (0=0°, 1=90°, 2=180°, 3=270°)。ドライバ内部でスクロールエリア判定も含めて一括して座標変換を行います。 |
 | `report-abs` | boolean | false | true の場合、相対座標ではなく絶対座標を報告します。 |
 
@@ -39,7 +39,7 @@
 
 デフォルトでは、このドライバーは相対座標 (`INPUT_REL_X`, `INPUT_REL_Y`) を報告します。デバイスツリーで `report-abs;` を設定すると、絶対座標 (`INPUT_ABS_X`, `INPUT_ABS_Y`) に切り替わります。
 これは、デジタイザーからマウスへの変換器など、絶対データを期待する ZMK 入力プロセッサと組み合わせる場合に便利です。
-絶対座標は 0 から 1024 の範囲で報告されます (チップの解像度定義による)。
+絶対座標は 0 から 1024 の範囲で報告されます (チップの解像度定義による、最大値を含む)。
 
 ## 3. インストール (GitHub Actions)
 
@@ -118,7 +118,7 @@ manifest:
         scroll_layer = <1>;
         scroll_start = <27>;
         rotate_cw = <0>;
-        // report-abs; // 絶対座標を使用する場合 (0-1024)
+        // report-abs; // 絶対座標を使用する場合 (0-1024、最大値を含む)
     };
 };
 
@@ -127,28 +127,7 @@ manifest:
         compatible = "zmk,input-listener";
         status = "okay";
         device = <&iqs7211e>;
-        /* カスタム入力プロセッサを使用したスクロールスライダー設定 */
-        scroller {
-            layers = <1>;
-            input-processors = <&zip_xy_scaler 1 20>, 
-                               <&zip_xy_transform (INPUT_TRANSFORM_Y_INVERT)>,
-                               <&zip_xy_to_scroll_mapper>;
-        };
-    };
-};
-```
-
-出力される座標はドライバ内部ですでに補正済みのため、後続の `trackpad_input_listener` では回転や反転の処理 (`zip_xy_transform`, `zip_xy_swap_mapper` 等) を記述する必要はなく、感度調整や慣性移動（inertia）の適用に専念できます。
-
-オプション：90度回転 (rotate_cw = <1>)
-
-```dts
-/ {
-    trackpad_input_listener: trackpad_input_listener {
-        compatible = "zmk,input-listener";
-        status = "okay";
-        device = <&iqs7211e>;
-        /* ドライバ側で回転済みのため、ここでは軸変換は不要 */
+        /* ドライバ側で回転補正が行われるため、リスナー側での zip_xy_transform 等は不要 */
         input-processors = <&zip_xy_scaler 1 1>; 
         scroller {
             layers = <1>;
