@@ -36,19 +36,26 @@ properties:
     description: |
       Set the button triggered by press-hold.
       -1 = disabled, 0 = BTN_0, 1 = BTN_1, 2 = BTN_2
-  scroll_layer:
+  scroll-layer:
     type: int
     default: -1
     description: |
-      Set the active scroll layer.
-      -1 = disabled, others = layer num
-  scroll_start:
+      Layer activated while the scroll slider area is touched.
+      -1 = disabled, others = layer number.
+  scroll-start:
     type: int
     default: 40
     description: |
-      Set resolution threshold to active scroll layer. (padding from edge)
-      currently it has 1024x,1024y max resolution.
-  rotate_cw:
+      Padding from the right edge used to detect the scroll slider area.
+      The normalized coordinate range is 0-1024 inclusive.
+  scroll-trigger-layers:
+    type: array
+    description: |
+      Restrict automatic scroll-layer activation to these highest active layers.
+      If omitted, automatic scroll-layer activation is allowed on any layer.
+      This does not change the target scroll-layer; it only controls which
+      layers may trigger it.
+  rotate-cw:
     type: int
     default: 0
     description: |

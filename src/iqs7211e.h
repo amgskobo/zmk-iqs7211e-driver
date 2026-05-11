@@ -121,6 +121,8 @@ struct iqs7211e_config
     int8_t press_hold;
     int8_t scroll_layer;
     uint16_t scroll_start;
+    const uint8_t *scroll_trigger_layers;
+    uint8_t scroll_trigger_layer_count;
     uint8_t rotate_cw;
     bool report_abs;
 };

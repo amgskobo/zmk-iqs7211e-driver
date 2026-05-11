@@ -36,6 +36,7 @@ static int iqs7211e_sw_reset(struct iqs7211e_data *data);
 static int iqs7211e_run_ati(struct iqs7211e_data *data);
 static int iqs7211e_queue_value_updates(struct iqs7211e_data *data);
 static int iqs7211e_set_event_mode(struct iqs7211e_data *data);
+static bool iqs7211e_scroll_trigger_layer_allowed(const struct iqs7211e_config *config);
 static uint8_t iqs7211e_get_bit(uint8_t byte, uint8_t pos);
 static uint8_t iqs7211e_get_num_fingers(const struct iqs7211e_data *data);
 static int set_gpio_interrupt(const struct device *dev, const bool en);
@@ -391,6 +392,26 @@ static enum iqs7211e_gestures_event iqs7211e_get_touchpad_event(const struct iqs
 static uint8_t iqs7211e_get_bit(uint8_t byte, uint8_t pos)
 {
     return (byte >> pos) & 0x01;
+}
+
+static bool iqs7211e_scroll_trigger_layer_allowed(const struct iqs7211e_config *config)
+{
+    if (config->scroll_trigger_layer_count == 0)
+    {
+        return true;
+    }
+
+    uint8_t active_layer = zmk_keymap_highest_layer_active();
+
+    for (uint8_t i = 0; i < config->scroll_trigger_layer_count; i++)
+    {
+        if (config->scroll_trigger_layers[i] == active_layer)
+        {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 static uint8_t iqs7211e_get_num_fingers(const struct iqs7211e_data *data)
@@ -807,7 +828,8 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
         }
 
         /* 3.2. Scroll Layer Detection */
-        if (data->touch_count <= 2 && config->scroll_layer >= 0 && !data->is_scroll_layer_active)
+        if (data->touch_count <= 2 && config->scroll_layer >= 0 && !data->is_scroll_layer_active &&
+            iqs7211e_scroll_trigger_layer_allowed(config))
         {
             /* Compare against MaxX - padding */
             if (x > RESOLUTION_X - config->scroll_start)
@@ -1076,20 +1098,31 @@ static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action ac
 }
 #endif // #ifdef CONFIG_PM_DEVICE
 
-#define IQS7211E_DEFINE(inst)                                      \
-    static struct iqs7211e_data iqs7211e_data_##inst;              \
-    static const struct iqs7211e_config iqs7211e_config_##inst = { \
-        .i2c = I2C_DT_SPEC_INST_GET(inst),                         \
-        .irq_gpio = GPIO_DT_SPEC_INST_GET(inst, irq_gpios),        \
-        .single_tap = DT_INST_PROP_OR(inst, single_tap, -1),       \
-        .double_tap = DT_INST_PROP_OR(inst, double_tap, -1),       \
-        .triple_tap = DT_INST_PROP_OR(inst, triple_tap, -1),       \
-        .press_hold = DT_INST_PROP_OR(inst, press_hold, -1),       \
-        .scroll_layer = DT_INST_PROP_OR(inst, scroll_layer, -1),   \
-        .scroll_start = DT_INST_PROP_OR(inst, scroll_start, 40),   \
-        .rotate_cw = DT_INST_PROP_OR(inst, rotate_cw, 0),          \
-        .report_abs = DT_INST_PROP(inst, report_abs),              \
-    };                                                             \
+#define IQS7211E_SCROLL_TRIGGER_LAYERS(inst)                                                   \
+    COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, scroll_trigger_layers),                             \
+                (static const uint8_t iqs7211e_scroll_trigger_layers_##inst[] = {               \
+                     DT_INST_PROP(inst, scroll_trigger_layers),                                  \
+                 };),                                                                           \
+                ())
+
+#define IQS7211E_DEFINE(inst)                                                                   \
+    IQS7211E_SCROLL_TRIGGER_LAYERS(inst)                                                        \
+    static struct iqs7211e_data iqs7211e_data_##inst;                                           \
+    static const struct iqs7211e_config iqs7211e_config_##inst = {                              \
+        .i2c = I2C_DT_SPEC_INST_GET(inst),                                                      \
+        .irq_gpio = GPIO_DT_SPEC_INST_GET(inst, irq_gpios),                                     \
+        .single_tap = DT_INST_PROP_OR(inst, single_tap, -1),                                    \
+        .double_tap = DT_INST_PROP_OR(inst, double_tap, -1),                                    \
+        .triple_tap = DT_INST_PROP_OR(inst, triple_tap, -1),                                    \
+        .press_hold = DT_INST_PROP_OR(inst, press_hold, -1),                                    \
+        .scroll_layer = DT_INST_PROP_OR(inst, scroll_layer, -1),                                \
+        .scroll_start = DT_INST_PROP_OR(inst, scroll_start, 40),                                \
+        .scroll_trigger_layers = COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, scroll_trigger_layers), \
+                                             (iqs7211e_scroll_trigger_layers_##inst), (NULL)),   \
+        .scroll_trigger_layer_count = DT_INST_PROP_LEN_OR(inst, scroll_trigger_layers, 0),       \
+        .rotate_cw = DT_INST_PROP_OR(inst, rotate_cw, 0),                                       \
+        .report_abs = DT_INST_PROP(inst, report_abs),                                           \
+    };                                                                                          \
     PM_DEVICE_DT_INST_DEFINE(inst, iqs7211e_pm_action);            \
     DEVICE_DT_INST_DEFINE(inst,                                    \
                           &iqs7211e_init,                          \

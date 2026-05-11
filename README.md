@@ -14,9 +14,9 @@ The driver also implements touch gesture and scroll slider features:
 - Single-tap / Double-tap / Triple-tap
 - Tap & Hold
 - Scroll slider (right-edge area)
-  - Activates a specified layer while touching (`scroll_layer = <1>` is generally used)
+  - Activates a specified layer while touching (`scroll-layer = <1>` is generally used)
   - Releases to off the layer
-- Precise rotation correction (`rotate_cw`) for flexible physical placement, including automatic slider area adjustment. **Eliminates the need for manual rotation/flipping in input processors.**
+- Precise rotation correction (`rotate-cw`) for flexible physical placement, including automatic slider area adjustment. **Eliminates the need for manual rotation/flipping in input processors.**
 - "Ultimate Quality" Rigor: Implemented mathematical boundary fixes (Off-by-one) and safe PM (Power Management) execution guards.
 
 ## 2. Device Tree Properties
@@ -29,9 +29,10 @@ The driver also implements touch gesture and scroll slider features:
 | `double-tap` | int | -1 | Button triggered by double-tap (-1=disabled, 0=BTN_0, 1=BTN_1, 2=BTN_2, ...) |
 | `triple-tap` | int | -1 | Button triggered by triple-tap (-1=disabled, 0=BTN_0, 1=BTN_1, 2=BTN_2, ...) |
 | `press-hold` | int | -1 | Button triggered by tap-and-hold (-1=disabled, 0=BTN_0, 1=BTN_1, 2=BTN_2. ...)|
-| `scroll_layer` | int | -1 | Layer activated while first touching scroll slider area (-1=disabled, others=layer num) |
-| `scroll_start` | uint | 40 | Threshold/padding from right edge to activate scroll slider (resolution 0-1024 inclusive) |
-| `rotate_cw` | uint | 0 | **CW Rotation angle to match physical placement** (0=0°, 1=90°, 2=180°, 3=270°). Coordinates and scroll area are normalized internally. |
+| `scroll-layer` | int | -1 | Layer activated while first touching scroll slider area (-1=disabled, others=layer num) |
+| `scroll-start` | uint | 40 | Threshold/padding from right edge to activate scroll slider (resolution 0-1024 inclusive) |
+| `scroll-trigger-layers` | array | any | Highest active layers that may activate the scroll layer. If omitted, any layer may trigger it. |
+| `rotate-cw` | uint | 0 | **CW Rotation angle to match physical placement** (0=0°, 1=90°, 2=180°, 3=270°). Coordinates and scroll area are normalized internally. |
 | `report-abs` | boolean | false | If true, report absolute coordinates instead of relative ones. |
 
 ### 2.1 Absolute Pointer Report Mode
@@ -39,6 +40,24 @@ The driver also implements touch gesture and scroll slider features:
 By default, this driver reports relative coordinates (`INPUT_REL_X`, `INPUT_REL_Y`). By setting `report-abs;` in the Device Tree, it will switch to absolute coordinates (`INPUT_ABS_X`, `INPUT_ABS_Y`).
 This is useful when combined with ZMK input processors that expect absolute data, such as a digitizer-to-mouse converter.
 The absolute coordinates are reported in the range of 0 to 1024 (as defined by the chip's resolution).
+
+### 2.2 Scroll Layer Trigger Control
+
+`scroll-layer` selects the layer that is activated while the scroll slider area is touched. `scroll-trigger-layers` limits where that automatic activation is allowed.
+
+The driver checks the highest active ZMK layer when a touch starts near the scroll slider area. If that layer is listed in `scroll-trigger-layers`, the driver activates `scroll-layer`. If the current highest active layer is not listed, the touch is handled normally and the scroll layer is not activated.
+
+Example:
+
+```dts
+scroll-layer = <6>;
+scroll-start = <50>;
+scroll-trigger-layers = <0 1 2 3>;
+```
+
+In this example, layer 6 is used as the scroll layer, but it can only be triggered from layers 0, 1, 2, or 3. This is useful when media or settings layers should still allow normal tap gestures without accidentally entering the scroll layer.
+
+If `scroll-trigger-layers` is omitted, the driver keeps the previous behavior and allows any layer to trigger `scroll-layer`.
 
 ## 3. Installation (GitHub Actions)
 
@@ -114,9 +133,10 @@ Add the IQS7211E node in your keyboard DTS overlay file (example of XIAO_BLE boa
         // press-hold = <0>;  // if you don't use
 
         /* Scroll slider settings */
-        scroll_layer = <1>;
-        scroll_start = <27>;
-        rotate_cw = <0>;
+        scroll-layer = <1>;
+        scroll-start = <27>;
+        // scroll-trigger-layers = <0 1>; // optional: only these highest active layers may enter scroll mode
+        rotate-cw = <0>;
         // report-abs; // Use absolute coordinates (0-1024 inclusive)
     };
 };
