@@ -1100,9 +1100,8 @@ static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action ac
 
 #define IQS7211E_SCROLL_TRIGGER_LAYERS(inst)                                                   \
     COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, scroll_trigger_layers),                             \
-                (static const uint8_t iqs7211e_scroll_trigger_layers_##inst[] = {               \
-                     DT_INST_PROP(inst, scroll_trigger_layers),                                  \
-                 };),                                                                           \
+                (static const uint8_t iqs7211e_scroll_trigger_layers_##inst[] =                  \
+                     DT_INST_PROP(inst, scroll_trigger_layers);),                                 \
                 ())
 
 #define IQS7211E_DEFINE(inst)                                                                   \
