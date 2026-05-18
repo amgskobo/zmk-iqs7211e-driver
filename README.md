@@ -61,7 +61,7 @@ If `scroll-trigger-layers` is omitted, the driver keeps the previous behavior an
 
 ## 3. Installation (GitHub Actions)
 
-> **Note:** Only GitHub Actions builds are covered here. Local builds differ per user and are not covered.  
+> **Note:** Only GitHub Actions builds are covered here. Local builds differ per user and are not covered.
 
 ### 3.1 Add Driver via `west` Manifest
 
@@ -147,10 +147,10 @@ Add the IQS7211E node in your keyboard DTS overlay file (example of XIAO_BLE boa
         status = "okay";
         device = <&iqs7211e>;
         /* Driver handles the rotation; processors handle the performance/feel */
-        input-processors = <&zip_xy_scaler 1 1>; 
+        input-processors = <&zip_xy_scaler 1 1>;
         scroller {
             layers = <1>;
-            input-processors = <&zip_xy_scaler 1 20>, 
+            input-processors = <&zip_xy_scaler 1 20>,
                                <&zip_xy_to_scroll_mapper>;
         };
     };
@@ -171,7 +171,7 @@ CONFIG_IQS7211E=y
 
 ### 3.4 Build Firmware
 
-Push your changes to your GitHub repository.  
+Push your changes to your GitHub repository.
 The GitHub Actions workflow automatically builds the firmware and generates artifacts (`.uf2` or `.bin`) ready for download.
 
 ## 4. HW and Dimensions

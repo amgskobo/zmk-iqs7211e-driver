@@ -148,10 +148,10 @@ manifest:
         status = "okay";
         device = <&iqs7211e>;
         /* ドライバ側で回転補正が行われるため、リスナー側での zip_xy_transform 等は不要 */
-        input-processors = <&zip_xy_scaler 1 1>; 
+        input-processors = <&zip_xy_scaler 1 1>;
         scroller {
             layers = <1>;
-            input-processors = <&zip_xy_scaler 1 20>, 
+            input-processors = <&zip_xy_scaler 1 20>,
                                <&zip_xy_to_scroll_mapper>;
         };
     };

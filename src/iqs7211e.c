@@ -282,7 +282,7 @@ static int iqs7211e_queue_value_updates(struct iqs7211e_data *data)
     data->finger_1_x = (buf[5] << 8) | buf[4];
     data->finger_1_y = (buf[7] << 8) | buf[6];
 
-    /* 
+    /*
      * Finger 2 is physically not supported on this 22x22mm module.
      * Disabling to optimize I2C traffic.
      *
@@ -758,8 +758,8 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
 
     if (config->rotate_cw == 1)
     {
-        /* 
-         * Rotation 90deg CW: 
+        /*
+         * Rotation 90deg CW:
          * X = (MaxY) - raw_y
          * Y = raw_x
          */
@@ -768,8 +768,8 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
     }
     else if (config->rotate_cw == 2)
     {
-        /* 
-         * Rotation 180deg CW: 
+        /*
+         * Rotation 180deg CW:
          * X = (MaxX) - raw_x
          * Y = (MaxY) - raw_y
          */
@@ -778,8 +778,8 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
     }
     else if (config->rotate_cw == 3)
     {
-        /* 
-         * Rotation 270deg CW: 
+        /*
+         * Rotation 270deg CW:
          * X = raw_y
          * Y = (MaxX) - raw_x
          */
@@ -789,7 +789,7 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
 
     LOG_DBG("Fingers: %d, Gesture: %d, Mode: %s", num_fingers, gesture_event, config->report_abs ? "Abs" : "Rel");
     /* Finger 2 reporting is disabled for this hardware profile */
-    LOG_DBG("Raw: F1(X=%d, Y=%d) | Norm: X=%d, Y=%d", 
+    LOG_DBG("Raw: F1(X=%d, Y=%d) | Norm: X=%d, Y=%d",
             data->finger_1_x, data->finger_1_y, x, y);
 
     // Skip first frame setup for smoothing
