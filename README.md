@@ -12,7 +12,7 @@ The driver is inspired by the [ZMK PMW3610 driver](https://github.com/inorichi/z
 The driver also implements touch gesture and scroll slider features:
 
 - Single-tap / Double-tap / Triple-tap
-- Tap & Hold
+- Tap & Hold is defined for compatibility, but disabled
 - Scroll slider (right-edge area)
   - Activates a specified layer while touching (`scroll-layer = <1>` is generally used)
   - Releases to off the layer
@@ -28,7 +28,7 @@ The driver also implements touch gesture and scroll slider features:
 | `single-tap` | int | -1 | Button triggered by single-tap (-1=disabled, 0=BTN_0, 1=BTN_1, 2=BTN_2, ...) |
 | `double-tap` | int | -1 | Button triggered by double-tap (-1=disabled, 0=BTN_0, 1=BTN_1, 2=BTN_2, ...) |
 | `triple-tap` | int | -1 | Button triggered by triple-tap (-1=disabled, 0=BTN_0, 1=BTN_1, 2=BTN_2, ...) |
-| `press-hold` | int | -1 | Button triggered by tap-and-hold (-1=disabled, 0=BTN_0, 1=BTN_1, 2=BTN_2. ...)|
+| `press-hold` | int | -1 | Defined for compatibility, but disabled by the driver configuration and does not emit button events. |
 | `scroll-layer` | int | -1 | Layer activated while first touching scroll slider area (-1=disabled, others=layer num) |
 | `scroll-start` | uint | 40 | Threshold/padding from right edge to activate scroll slider (resolution 0-1024 inclusive) |
 | `scroll-trigger-layers` | array | any | Highest active layers that may activate the scroll layer. If omitted, any layer may trigger it. |
@@ -130,7 +130,7 @@ Add the IQS7211E node in your keyboard DTS overlay file (example of XIAO_BLE boa
         single-tap = <0>;
         double-tap = <0>;
         triple-tap = <0>;
-        // press-hold = <0>;  // if you don't use
+        // press-hold is defined but disabled by the driver
 
         /* Scroll slider settings */
         scroll-layer = <1>;

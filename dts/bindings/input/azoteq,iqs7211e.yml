@@ -34,8 +34,8 @@ properties:
     type: int
     default: -1
     description: |
-      Set the button triggered by press-hold.
-      -1 = disabled, 0 = BTN_0, 1 = BTN_1, 2 = BTN_2
+      Defined for compatibility, but disabled by the driver configuration.
+      It does not emit button events.
   scroll-layer:
     type: int
     default: -1

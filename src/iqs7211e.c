@@ -1113,7 +1113,7 @@ static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action ac
         .single_tap = DT_INST_PROP_OR(inst, single_tap, -1),                                    \
         .double_tap = DT_INST_PROP_OR(inst, double_tap, -1),                                    \
         .triple_tap = DT_INST_PROP_OR(inst, triple_tap, -1),                                    \
-        .press_hold = DT_INST_PROP_OR(inst, press_hold, -1),                                    \
+        .press_hold = -1,                                                                       \
         .scroll_layer = DT_INST_PROP_OR(inst, scroll_layer, -1),                                \
         .scroll_start = DT_INST_PROP_OR(inst, scroll_start, 40),                                \
         .scroll_trigger_layers = COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, scroll_trigger_layers), \
