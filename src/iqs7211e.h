@@ -123,8 +123,12 @@ struct iqs7211e_config
     uint16_t scroll_start;
     const uint8_t *scroll_trigger_layers;
     uint8_t scroll_trigger_layer_count;
+    const uint8_t *stationary_report_layers;
+    uint8_t stationary_report_layer_count;
     uint8_t rotate_cw;
     bool report_abs;
+    uint16_t stationary_report_interval_ms;
+    uint16_t stationary_touch_verify_interval_ms;
 };
 
 struct iqs7211e_data
@@ -148,5 +152,8 @@ struct iqs7211e_data
     int16_t finger_1_prev_dx;
     int16_t finger_1_prev_dy;
     bool last_touched_state;
+    uint32_t stationary_last_verify_uptime_ms;
+    struct k_work_delayable stationary_report_work;
+    struct k_work_sync stationary_report_work_sync;
     struct k_work_sync work_sync;
 };

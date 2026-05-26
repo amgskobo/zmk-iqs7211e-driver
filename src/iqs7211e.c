@@ -29,6 +29,7 @@ static bool iqs7211e_read_ati_active(struct iqs7211e_data *data);
 static int iqs7211e_read_bytes(const struct i2c_dt_spec *i2c, uint8_t reg, uint8_t *buf, size_t len);
 static int iqs7211e_write_bytes(const struct i2c_dt_spec *i2c, uint8_t reg, const uint8_t *data, size_t numBytes);
 static void iqs7211e_work_handler(struct k_work *work);
+static void iqs7211e_stationary_report_work_handler(struct k_work *work);
 static void iqs7211e_report_data(struct iqs7211e_data *data);
 static void iqs7211e_gpio_callback(const struct device *port, struct gpio_callback *cb, gpio_port_pins_t pins);
 static int iqs7211e_write_defaults(struct iqs7211e_data *data);
@@ -36,8 +37,14 @@ static int iqs7211e_sw_reset(struct iqs7211e_data *data);
 static int iqs7211e_run_ati(struct iqs7211e_data *data);
 static int iqs7211e_queue_value_updates(struct iqs7211e_data *data);
 static int iqs7211e_set_event_mode(struct iqs7211e_data *data);
+static bool iqs7211e_layer_allowed(const uint8_t *layers, uint8_t layer_count);
 static bool iqs7211e_scroll_trigger_layer_allowed(const struct iqs7211e_config *config);
+static bool iqs7211e_stationary_report_layer_allowed(const struct iqs7211e_config *config);
+static bool iqs7211e_stationary_report_allowed(const struct iqs7211e_data *data);
+static bool iqs7211e_stationary_touch_still_present(struct iqs7211e_data *data);
+static void iqs7211e_stationary_report_release_touch(struct iqs7211e_data *data);
 static uint8_t iqs7211e_get_bit(uint8_t byte, uint8_t pos);
+static uint8_t iqs7211e_get_num_fingers_from_info_flags(const uint8_t *info_flags);
 static uint8_t iqs7211e_get_num_fingers(const struct iqs7211e_data *data);
 static int set_gpio_interrupt(const struct device *dev, const bool en);
 static int iqs7211e_init(const struct device *dev);
@@ -394,18 +401,18 @@ static uint8_t iqs7211e_get_bit(uint8_t byte, uint8_t pos)
     return (byte >> pos) & 0x01;
 }
 
-static bool iqs7211e_scroll_trigger_layer_allowed(const struct iqs7211e_config *config)
+static bool iqs7211e_layer_allowed(const uint8_t *layers, uint8_t layer_count)
 {
-    if (config->scroll_trigger_layer_count == 0)
+    if (layer_count == 0)
     {
         return true;
     }
 
     uint8_t active_layer = zmk_keymap_highest_layer_active();
 
-    for (uint8_t i = 0; i < config->scroll_trigger_layer_count; i++)
+    for (uint8_t i = 0; i < layer_count; i++)
     {
-        if (config->scroll_trigger_layers[i] == active_layer)
+        if (layers[i] == active_layer)
         {
             return true;
         }
@@ -414,12 +421,103 @@ static bool iqs7211e_scroll_trigger_layer_allowed(const struct iqs7211e_config *
     return false;
 }
 
-static uint8_t iqs7211e_get_num_fingers(const struct iqs7211e_data *data)
+static bool iqs7211e_scroll_trigger_layer_allowed(const struct iqs7211e_config *config)
 {
-    uint8_t byte = data->info_flags[1];
+    return iqs7211e_layer_allowed(config->scroll_trigger_layers, config->scroll_trigger_layer_count);
+}
+
+static bool iqs7211e_stationary_report_layer_allowed(const struct iqs7211e_config *config)
+{
+    return iqs7211e_layer_allowed(config->stationary_report_layers, config->stationary_report_layer_count);
+}
+
+static bool iqs7211e_stationary_report_allowed(const struct iqs7211e_data *data)
+{
+    const struct iqs7211e_config *config = data->dev->config;
+
+    return config->report_abs && config->stationary_report_interval_ms > 0 &&
+           data->last_touched_state && iqs7211e_stationary_report_layer_allowed(config);
+}
+
+static uint8_t iqs7211e_get_num_fingers_from_info_flags(const uint8_t *info_flags)
+{
+    uint8_t byte = info_flags[1];
     uint8_t num = iqs7211e_get_bit(byte, IQS7211E_NUM_FINGERS_BIT_0) |
                   (iqs7211e_get_bit(byte, IQS7211E_NUM_FINGERS_BIT_1) << 1);
     return num;
+}
+
+static uint8_t iqs7211e_get_num_fingers(const struct iqs7211e_data *data)
+{
+    return iqs7211e_get_num_fingers_from_info_flags(data->info_flags);
+}
+
+static bool iqs7211e_stationary_touch_still_present(struct iqs7211e_data *data)
+{
+    const struct iqs7211e_config *config = data->dev->config;
+
+    if (config->stationary_touch_verify_interval_ms == 0)
+    {
+        return true;
+    }
+
+    uint32_t now = k_uptime_get_32();
+    if ((uint32_t)(now - data->stationary_last_verify_uptime_ms) <
+        config->stationary_touch_verify_interval_ms)
+    {
+        return true;
+    }
+
+    uint8_t info_flags[2];
+    if (iqs7211e_read_info_flags(data, info_flags) < 0)
+    {
+        LOG_WRN("Stationary touch verify failed; stopping stationary reports");
+        return false;
+    }
+
+    data->stationary_last_verify_uptime_ms = now;
+
+    if (iqs7211e_get_num_fingers_from_info_flags(info_flags) == 0)
+    {
+        LOG_DBG("Stationary touch verify found no fingers");
+        return false;
+    }
+
+    return true;
+}
+
+static void iqs7211e_stationary_report_release_touch(struct iqs7211e_data *data)
+{
+    const struct iqs7211e_config *config = data->dev->config;
+
+    if (data->last_touched_state)
+    {
+        input_report_key(data->dev, INPUT_BTN_TOUCH, false, false, K_FOREVER);
+        data->last_touched_state = false;
+    }
+
+    if (data->start_tap == 1 && config->press_hold >= 0)
+    {
+        input_report_key(data->dev, INPUT_BTN_0 + config->press_hold, false, false, K_FOREVER);
+    }
+    data->start_tap = 0;
+
+    if (config->report_abs)
+    {
+        input_report_abs(data->dev, INPUT_ABS_X, data->finger_1_prev_x, false, K_FOREVER);
+        input_report_abs(data->dev, INPUT_ABS_Y, data->finger_1_prev_y, true, K_FOREVER);
+    }
+
+    if (data->is_scroll_layer_active && config->scroll_layer >= 0)
+    {
+        zmk_keymap_layer_deactivate(config->scroll_layer, false);
+        data->is_scroll_layer_active = false;
+        LOG_DBG("Scroll layer deactivated");
+    }
+
+    data->touch_count = 0;
+    data->finger_1_prev_dx = 0;
+    data->finger_1_prev_dy = 0;
 }
 
 static int iqs7211e_write_defaults(struct iqs7211e_data *data)
@@ -738,6 +836,32 @@ static void iqs7211e_work_handler(struct k_work *work)
     set_gpio_interrupt(data->dev, true);
 }
 
+static void iqs7211e_stationary_report_work_handler(struct k_work *work)
+{
+    struct k_work_delayable *d_work = k_work_delayable_from_work(work);
+    struct iqs7211e_data *data = CONTAINER_OF(d_work, struct iqs7211e_data, stationary_report_work);
+    const struct iqs7211e_config *config = data->dev->config;
+
+    if (!iqs7211e_stationary_report_allowed(data))
+    {
+        return;
+    }
+
+    if (!iqs7211e_stationary_touch_still_present(data))
+    {
+        iqs7211e_stationary_report_release_touch(data);
+        return;
+    }
+
+    input_report_abs(data->dev, INPUT_ABS_X, data->finger_1_prev_x, false, K_FOREVER);
+    input_report_abs(data->dev, INPUT_ABS_Y, data->finger_1_prev_y, true, K_FOREVER);
+
+    if (iqs7211e_stationary_report_allowed(data))
+    {
+        k_work_reschedule(&data->stationary_report_work, K_MSEC(config->stationary_report_interval_ms));
+    }
+}
+
 static void iqs7211e_report_data(struct iqs7211e_data *data)
 {
     const struct iqs7211e_config *config = data->dev->config;
@@ -921,6 +1045,7 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
         {
             input_report_key(data->dev, INPUT_BTN_TOUCH, false, false, K_FOREVER);
             data->last_touched_state = false;
+            k_work_cancel_delayable(&data->stationary_report_work);
         }
 
         /* 4.2. Process Release Gestures (Taps, etc.) - Only if not scrolling */
@@ -1007,6 +1132,19 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
         data->finger_1_prev_dx = dx;
         data->finger_1_prev_dy = dy;
     }
+
+    if (config->stationary_report_interval_ms > 0)
+    {
+        if (num_fingers > 0 && iqs7211e_stationary_report_allowed(data))
+        {
+            data->stationary_last_verify_uptime_ms = k_uptime_get_32();
+            k_work_reschedule(&data->stationary_report_work, K_MSEC(config->stationary_report_interval_ms));
+        }
+        else
+        {
+            k_work_cancel_delayable(&data->stationary_report_work);
+        }
+    }
 }
 
 static int set_gpio_interrupt(const struct device *dev, const bool en)
@@ -1066,9 +1204,11 @@ static int iqs7211e_init(const struct device *dev)
     data->start_tap = 0;
     data->is_scroll_layer_active = false;
     data->last_touched_state = false;
+    data->stationary_last_verify_uptime_ms = 0;
     data->dev = dev;
 
     k_work_init(&data->work, iqs7211e_work_handler);
+    k_work_init_delayable(&data->stationary_report_work, iqs7211e_stationary_report_work_handler);
     set_gpio_interrupt(data->dev, true);
 
     LOG_INF("IQS7211E driver initialized successfully");
@@ -1083,6 +1223,9 @@ static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action ac
     {
     case PM_DEVICE_ACTION_SUSPEND:
         set_gpio_interrupt(dev, false);
+        data->last_touched_state = false;
+        data->stationary_last_verify_uptime_ms = 0;
+        k_work_cancel_delayable_sync(&data->stationary_report_work, &data->stationary_report_work_sync);
         return k_work_cancel_sync(&data->work, &data->work_sync);
     case PM_DEVICE_ACTION_RESUME:
         data->init_state = IQS7211E_INIT_VERIFY_PRODUCT;
@@ -1090,6 +1233,7 @@ static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action ac
         data->start_tap = 0;
         data->is_scroll_layer_active = false;
         data->last_touched_state = false;
+        data->stationary_last_verify_uptime_ms = 0;
         LOG_DBG("IQS7211E device resumed ");
         return set_gpio_interrupt(dev, true);
     default:
@@ -1104,8 +1248,15 @@ static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action ac
                      DT_INST_PROP(inst, scroll_trigger_layers);),                                 \
                 ())
 
+#define IQS7211E_STATIONARY_REPORT_LAYERS(inst)                                                 \
+    COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, stationary_report_layers),                           \
+                (static const uint8_t iqs7211e_stationary_report_layers_##inst[] =                \
+                     DT_INST_PROP(inst, stationary_report_layers);),                               \
+                ())
+
 #define IQS7211E_DEFINE(inst)                                                                   \
     IQS7211E_SCROLL_TRIGGER_LAYERS(inst)                                                        \
+    IQS7211E_STATIONARY_REPORT_LAYERS(inst)                                                     \
     static struct iqs7211e_data iqs7211e_data_##inst;                                           \
     static const struct iqs7211e_config iqs7211e_config_##inst = {                              \
         .i2c = I2C_DT_SPEC_INST_GET(inst),                                                      \
@@ -1119,8 +1270,15 @@ static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action ac
         .scroll_trigger_layers = COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, scroll_trigger_layers), \
                                              (iqs7211e_scroll_trigger_layers_##inst), (NULL)),   \
         .scroll_trigger_layer_count = DT_INST_PROP_LEN_OR(inst, scroll_trigger_layers, 0),       \
+        .stationary_report_layers = COND_CODE_1(                                                \
+            DT_INST_NODE_HAS_PROP(inst, stationary_report_layers),                               \
+            (iqs7211e_stationary_report_layers_##inst), (NULL)),                                 \
+        .stationary_report_layer_count = DT_INST_PROP_LEN_OR(inst, stationary_report_layers, 0), \
         .rotate_cw = DT_INST_PROP_OR(inst, rotate_cw, 0),                                       \
         .report_abs = DT_INST_PROP(inst, report_abs),                                           \
+        .stationary_report_interval_ms = DT_INST_PROP_OR(inst, stationary_report_interval_ms, 0),\
+        .stationary_touch_verify_interval_ms =                                                   \
+            DT_INST_PROP_OR(inst, stationary_touch_verify_interval_ms, 120),                     \
     };                                                                                          \
     PM_DEVICE_DT_INST_DEFINE(inst, iqs7211e_pm_action);            \
     DEVICE_DT_INST_DEFINE(inst,                                    \

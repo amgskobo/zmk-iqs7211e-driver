@@ -65,3 +65,24 @@ properties:
     type: boolean
     description: |
       If true, report absolute coordinates instead of relative ones.
+  stationary-report-interval-ms:
+    type: int
+    default: 0
+    description: |
+      When report-abs is enabled, resend the last absolute coordinate report
+      at this interval while touch remains active. This keeps downstream
+      joystick-style processors moving smoothly during stationary touches in
+      IQS7211E Event Mode. Set to 0 to disable.
+  stationary-report-layers:
+    type: array
+    description: |
+      Restrict stationary absolute coordinate resends to these highest active
+      layers. If omitted, stationary resends are allowed on any layer.
+  stationary-touch-verify-interval-ms:
+    type: int
+    default: 120
+    description: |
+      While stationary resends are active, read INFO_FLAGS at this interval to
+      verify that a touch is still present. If the read fails or no fingers are
+      present, stop stationary resends and report touch release. Set to 0 to
+      disable this fail-safe check.
