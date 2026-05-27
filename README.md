@@ -76,10 +76,10 @@ Example:
 ```dts
 scroll-layer = <6>;
 scroll-start = <50>;
-scroll-trigger-layers = <0 1 2 3>;
+scroll-trigger-layers = <0>;
 ```
 
-In this example, layer 6 is used as the scroll layer, but it can only be triggered from layers 0, 1, 2, or 3. This is useful when media or settings layers should still allow normal tap gestures without accidentally entering the scroll layer.
+In this example, layer 6 is used as the scroll layer, but it can only be triggered from layer 0. This is useful when another layer, such as a padstick or mouse-only layer, should keep the full pad area available without the right edge entering the scroll layer.
 
 If `scroll-trigger-layers` is omitted, the driver keeps the previous behavior and allows any layer to trigger `scroll-layer`.
 
@@ -159,7 +159,7 @@ Add the IQS7211E node in your keyboard DTS overlay file (example of XIAO_BLE boa
         /* Scroll slider settings */
         scroll-layer = <1>;
         scroll-start = <27>;
-        // scroll-trigger-layers = <0 1>; // optional: only these highest active layers may enter scroll mode
+        // scroll-trigger-layers = <0>; // optional: only these highest active layers may enter scroll mode
         rotate-cw = <0>;
         // report-abs; // Use absolute coordinates (0-1024 inclusive)
         // stationary-report-interval-ms = <20>; // optional: resend stationary ABS reports

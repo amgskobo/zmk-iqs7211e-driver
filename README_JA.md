@@ -77,10 +77,10 @@ stationary-touch-verify-interval-ms = <120>;
 ```dts
 scroll-layer = <6>;
 scroll-start = <50>;
-scroll-trigger-layers = <0 1 2 3>;
+scroll-trigger-layers = <0>;
 ```
 
-この例では layer 6 をスクロール用レイヤーとして使いますが、発火できるのは layer 0, 1, 2, 3 が highest active layer の時だけです。MEDIA layer や設定 layer では通常の tap gesture を維持したい場合に有効です。
+この例では layer 6 をスクロール用レイヤーとして使いますが、発火できるのは layer 0 が highest active layer の時だけです。padstick や mouse-only 用のレイヤーでは、右端も含めたパッド全体を使いたい場合に有効です。
 
 `scroll-trigger-layers` を省略した場合は従来どおり、どの layer からでも `scroll-layer` を発火できます。
 
@@ -160,7 +160,7 @@ manifest:
         /* スクロールスライダー設定 */
         scroll-layer = <1>;
         scroll-start = <27>;
-        // scroll-trigger-layers = <0 1>; // 任意: 指定した highest active layer の時だけ scroll mode に入る
+        // scroll-trigger-layers = <0>; // 任意: 指定した highest active layer の時だけ scroll mode に入る
         rotate-cw = <0>;
         // report-abs; // 絶対座標を使用する場合 (0-1024、最大値を含む)
         // stationary-report-interval-ms = <20>; // 任意: 静止中の ABS レポートを再送する
