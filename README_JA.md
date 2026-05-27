@@ -35,6 +35,9 @@
 | `scroll-trigger-layers` | array | any | スクロールレイヤーを自動有効化してよい highest active layer。省略時はどのレイヤーでも有効化します。 |
 | `rotate-cw` | uint | 0 | **物理配置に合わせた時計回りの回転角度** (0=0°, 1=90°, 2=180°, 3=270°)。ドライバ内部でスクロールエリア判定も含めて一括して座標変換を行います。 |
 | `report-abs` | boolean | false | true の場合、相対座標ではなく絶対座標を報告します。 |
+| `stationary-report-interval-ms` | int | 0 | `report-abs` 有効時、タッチが継続している間に最後の絶対座標レポートをこの周期で再送します。0 で無効です。 |
+| `stationary-report-layers` | array | any | stationary absolute resend を許可する highest active layer。省略時はどのレイヤーでも再送します。 |
+| `stationary-touch-verify-interval-ms` | int | 120 | stationary resend 中、この周期で `INFO_FLAGS` を読み、タッチが残っているか確認します。0 で fail-safe 確認を無効化します。 |
 
 ### 2.1 絶対座標レポートモード
 
@@ -42,7 +45,28 @@
 これは、デジタイザーからマウスへの変換器など、絶対データを期待する ZMK 入力プロセッサと組み合わせる場合に便利です。
 絶対座標は 0 から 1024 の範囲で報告されます (チップの解像度定義による、最大値を含む)。
 
-### 2.2 スクロールレイヤーの発火制御
+### 2.2 静止中の絶対座標再送
+
+IQS7211E の Event Mode では、指を止めたままにすると新しいイベントが発生しなくなることがあります。`report-abs` を joystick や padstick のような入力プロセッサへ渡す場合、タッチは継続していても下流のプロセッサが止まったように見えることがあります。
+
+`stationary-report-interval-ms` は、タッチ中に最後の `INPUT_ABS_X` / `INPUT_ABS_Y` を定期的に再送して、この入力パイプラインを動かし続けます。この機能は絶対座標レポートのワークフロー向けなので、デフォルトでは無効です。
+
+`stationary-report-layers` で、再送を許可する highest active layer を制限できます。レイヤーごとに絶対座標を別の入力プロセッサへ渡す構成で便利です。たとえば padstick レイヤーでは再送し、scroll や matrix レイヤーでは再送しない、という使い分けができます。
+
+`stationary-touch-verify-interval-ms` は、stationary resend 中に `INFO_FLAGS` を定期的に確認します。読み取りに失敗した場合やセンサーが指なしを報告した場合、ドライバーはタッチを release して古い座標の再送を止めます。デフォルトは 120 ms です。この fail-safe が不要な場合のみ 0 にしてください。
+
+例:
+
+```dts
+report-abs;
+stationary-report-interval-ms = <20>;
+stationary-report-layers = <1>;
+stationary-touch-verify-interval-ms = <120>;
+```
+
+この例では、layer 1 が highest active layer の時だけ 20 ms ごとに stationary resend を行い、120 ms ごとにタッチの存在を確認します。
+
+### 2.3 スクロールレイヤーの発火制御
 
 `scroll-layer` は、スクロールスライダーエリアをタッチした時に有効化するレイヤーを指定します。`scroll-trigger-layers` は、その自動有効化をどのレイヤーから許可するかを制限します。
 
@@ -139,6 +163,9 @@ manifest:
         // scroll-trigger-layers = <0 1>; // 任意: 指定した highest active layer の時だけ scroll mode に入る
         rotate-cw = <0>;
         // report-abs; // 絶対座標を使用する場合 (0-1024、最大値を含む)
+        // stationary-report-interval-ms = <20>; // 任意: 静止中の ABS レポートを再送する
+        // stationary-report-layers = <1>; // 任意: 指定した highest active layer の時だけ再送する
+        // stationary-touch-verify-interval-ms = <120>; // 任意: 再送中にタッチ継続を確認する
     };
 };
 
