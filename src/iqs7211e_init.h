@@ -75,8 +75,55 @@
 
 /* Thresholds and Debounce Settings */
 /* Memory Map Position 0x38 - 0x3A */
-#define TRACKPAD_TOUCH_SET_THRESHOLD             0x16
-#define TRACKPAD_TOUCH_CLEAR_THRESHOLD           0x0E
+/*
+ * Tuned to stop the pointer drifting while a finger merely APPROACHES the pad.
+ * Stock was SET 0x16 (22) / CLEAR 0x0E (14).
+ *
+ * Threshold = Reference x (1 + Multiplier/128)  (datasheet 5.5.1)
+ * so one count is +0.78% of the channel reference. A larger value is LESS
+ * sensitive. Hysteresis width = SET - CLEAR.
+ *
+ * What the investigation established, in order of usefulness:
+ *
+ * 1. Hover and a light touch are NOT separable at touch-down. Measured over
+ *    ~50 touch episodes, 7 of 35 deliberate light taps peaked at the same
+ *    channel count (area 1-2) as a hover. No instantaneous test - strength,
+ *    area, or threshold - can tell them apart, because during an approach the
+ *    sensor genuinely cannot know whether the finger will land.
+ *
+ * 2. They DO diverge once contact is established. Measured with a slow steady
+ *    drag (constant force, so unlike tapping this is reproducible):
+ *        sustained light contact : never fell below str 315
+ *        hover                   : lingered around str 205-217
+ *    CLEAR belongs in that gap. This is the real fix: rather than trying to
+ *    reject a false touch at detection time, let it self-clear immediately
+ *    afterwards. With the stock CLEAR sitting far below SET, a false hover
+ *    detection never released - that is what produced an observed 182-frame
+ *    (2.7s) 2015px phantom drag.
+ *
+ *        CLEAR 0x0E (14): drag episodes [87, 147, 169, 183] - nothing releases
+ *        CLEAR 0x14 (20): [5,7,10,13,14,16,18,27,36,37,53,148,207,371]
+ *                         marginal contact clears in 0.1-0.3s (the point) and
+ *                         solid contact holds even longer, but real drags began
+ *                         to break slightly -> too eager.
+ *        CLEAR 0x12 (18): chosen.
+ *
+ * 3. SET was swept 22..34 and judged by feel. Note the per-step measurements
+ *    are NOT trustworthy: they track how hard the pad happened to be tapped far
+ *    more than they track the threshold, so operator variation swamps a single
+ *    count. SET was swept up to 0x22 (34) and settled back at 0x20 (32) by
+ *    feel, which is also exactly what Azoteq's own example code ships.
+ *
+ * Re-ATI was ruled out as a cause: zero re-ATI events across every capture.
+ *
+ * Note the surveyed drivers split into two lineages: Azoteq's own example plus
+ * Flipper (SET 32 / 75, ATI coarse multiplier 15), and a "SET 20" group of four
+ * ZMK/QMK drivers that all inherit one identical config. This panel's ATI was
+ * tuned by the official procedure (AZD123 4.2.1: coarse div 1, mult 15, then
+ * narrow the fine divider) and landed in the first lineage.
+ */
+#define TRACKPAD_TOUCH_SET_THRESHOLD             0x20
+#define TRACKPAD_TOUCH_CLEAR_THRESHOLD           0x12
 #define ALP_THRESHOLD_0                          0x08
 #define ALP_THRESHOLD_1                          0x00
 #define ALP_SET_DEBOUNCE                         0x04
@@ -110,13 +157,36 @@
 #define X_RESOLUTION_1                           0x04
 #define Y_RESOLUTION_0                           0x00 // 1024 (Max Coordinate N)
 #define Y_RESOLUTION_1                           0x04
-#define XY_DYNAMIC_FILTER_BOTTOM_SPEED_0         0x02
+/*
+ * XY filter values restored to Azoteq's reference set. The previous values
+ * (bottom 2 / top 16 / bottom beta 1 / static beta 0) left the IIR filter doing
+ * nothing useful: damping factor = beta/256 (datasheet 7.8.2) and the dynamic
+ * filter stops filtering above "top speed", but a finger landing was measured
+ * moving 36-47 px/cycle - far above 16 - so the transient passed through with
+ * only the 2-sample MAV average applied.
+ *
+ * 6 / 124 / 7 / 128 is what Azoteq's own example code uses, and every other
+ * IQS7211E driver surveyed ships it untouched - including Flipper's, which is
+ * the only other independent lineage. Nobody deviates from these four values.
+ *
+ * They were lost in bc9e6df (2026-01-23), a commit that also carried the
+ * legitimate ATI and CS-cap work for this panel; the filter values look like
+ * collateral from a full GUI export rather than a deliberate change.
+ */
+#define XY_DYNAMIC_FILTER_BOTTOM_SPEED_0         0x06
 #define XY_DYNAMIC_FILTER_BOTTOM_SPEED_1         0x00
-#define XY_DYNAMIC_FILTER_TOP_SPEED_0            0x10
+#define XY_DYNAMIC_FILTER_TOP_SPEED_0            0x7C
 #define XY_DYNAMIC_FILTER_TOP_SPEED_1            0x00
-#define XY_DYNAMIC_FILTER_BOTTOM_BETA            0x01
-#define XY_DYNAMIC_FILTER_STATIC_FILTER_BETA     0x00
-#define STATIONARY_TOUCH_MOV_THRESHOLD           0x1E
+#define XY_DYNAMIC_FILTER_BOTTOM_BETA            0x07
+#define XY_DYNAMIC_FILTER_STATIC_FILTER_BETA     0x80
+/*
+ * Movement below this (in output-resolution pixels) counts as a stationary
+ * touch, which gates the TP Movement flag and the drop to Idle-Touch mode
+ * (datasheet 7.5). 0x14 is what every other IQS7211E driver ships; this had
+ * been at 0x1E since bc9e6df, the same commit that lost the XY filter values.
+ * It does not affect reported coordinates.
+ */
+#define STATIONARY_TOUCH_MOV_THRESHOLD           0x14
 #define FINGER_SPLIT_FACTOR                      0x03
 #define X_TRIM_VALUE                             0x14
 #define Y_TRIM_VALUE                             0x14

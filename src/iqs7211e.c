@@ -271,9 +271,14 @@ static bool iqs7211e_read_ati_active(struct iqs7211e_data *data)
 static int iqs7211e_queue_value_updates(struct iqs7211e_data *data)
 {
     const struct iqs7211e_config *config = data->dev->config;
-    uint8_t buf[8];
+    /*
+     * 12 bytes covers 0x0E..0x13 in one transaction:
+     *   0x0E gestures | 0x0F info flags | 0x10 X | 0x11 Y
+     *   0x12 touch strength | 0x13 area   <- diagnostics, no extra I2C cost
+     */
+    uint8_t buf[12];
     int ret;
-    ret = iqs7211e_read_bytes(&config->i2c, IQS7211E_MM_GESTURES, buf, 8);
+    ret = iqs7211e_read_bytes(&config->i2c, IQS7211E_MM_GESTURES, buf, 12);
     if (ret < 0)
     {
         LOG_ERR("Failed to read GESTURES and FINGER_1 data");
@@ -288,6 +293,19 @@ static int iqs7211e_queue_value_updates(struct iqs7211e_data *data)
 
     data->finger_1_x = (buf[5] << 8) | buf[4];
     data->finger_1_y = (buf[7] << 8) | buf[6];
+
+    data->finger_1_strength = (buf[9] << 8) | buf[8];
+    data->finger_1_area = (buf[11] << 8) | buf[10];
+
+    /*
+     * A re-ATI re-seeds the channel references, so one firing while a finger is
+     * near the pad would capture the baseline WITH the finger present and skew
+     * every touch threshold afterwards. Tracked so it can be logged when tuning;
+     * measurement showed zero re-ATI events in normal use, so it is not the
+     * cause of hover-induced pointer drift.
+     */
+    data->prev_re_ati_occurred =
+        (data->info_flags[0] & (1 << IQS7211E_RE_ATI_OCCURRED_BIT)) != 0;
 
     /*
      * Finger 2 is physically not supported on this 22x22mm module.
