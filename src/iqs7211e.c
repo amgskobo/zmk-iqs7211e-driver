@@ -247,7 +247,7 @@ static int iqs7211e_acknowledge_reset(struct iqs7211e_data *data)
     return 0;
 }
 
-int iqs7211e_run_ati(struct iqs7211e_data *data)
+static int iqs7211e_run_ati(struct iqs7211e_data *data)
 {
     const struct iqs7211e_config *config = data->dev->config;
     uint8_t command[2];
@@ -1298,7 +1298,12 @@ static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action ac
         }
         data->click_edges = 0;
         k_work_cancel_delayable_sync(&data->stationary_report_work, &data->stationary_report_work_sync);
-        return k_work_cancel_sync(&data->work, &data->work_sync);
+        /*
+         * k_work_cancel_sync() returns a bool telling whether the work was
+         * pending, which is not a PM status. Report success explicitly.
+         */
+        k_work_cancel_sync(&data->work, &data->work_sync);
+        return 0;
     case PM_DEVICE_ACTION_RESUME:
         data->init_state = IQS7211E_INIT_VERIFY_PRODUCT;
         data->touch_count = 0;
