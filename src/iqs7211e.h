@@ -4,9 +4,12 @@
  * SPDX-License-Identifier: MIT
  */
 
+#pragma once
+
 #include <zephyr/device.h>
 #include <zephyr/drivers/i2c.h>
 #include <zephyr/drivers/gpio.h>
+#include <zephyr/kernel.h>
 
 // Regs
 #define IQS7211E_MM_PROD_NUM 0x00
@@ -138,11 +141,25 @@ struct iqs7211e_data
     struct k_work work;
     enum iqs7211e_init_state init_state;
     bool reset_called;
+    atomic_t suspended;
+    bool sensor_suspended;
     bool is_scroll_layer_active;
     uint8_t gestures[2];
     uint8_t info_flags[2];
     uint8_t touch_count;
     uint8_t start_tap;
+    /*
+     * Tap gestures are emitted as press/release pairs from a delayed work item
+     * rather than inline, because the report handler runs on the system
+     * workqueue and sleeping there stalls every other user of that queue.
+     * click_edges is the number of edges still to emit - two per click, so a
+     * triple tap starts at six - and click_button is the INPUT_BTN_* code.
+     * INPUT_BTN_0 is 0x100, so the button code needs 16 bits.
+     */
+    struct k_work_delayable click_work;
+    struct k_work_sync click_work_sync;
+    uint8_t click_edges;
+    uint16_t click_button;
     uint16_t finger_1_x;
     uint16_t finger_1_y;
     uint16_t finger_2_x;
@@ -152,6 +169,7 @@ struct iqs7211e_data
     int16_t finger_1_prev_dx;
     int16_t finger_1_prev_dy;
     bool last_touched_state;
+    bool stationary_verify_pending;
     uint32_t stationary_last_verify_uptime_ms;
     struct k_work_delayable stationary_report_work;
     struct k_work_sync stationary_report_work_sync;

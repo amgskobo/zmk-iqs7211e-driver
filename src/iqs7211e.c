@@ -19,21 +19,29 @@
 
 LOG_MODULE_REGISTER(iqs7211e, CONFIG_ZMK_LOG_LEVEL);
 
+/* Spacing between the press and release edges of a generated click. */
+#define IQS7211E_CLICK_EDGE_MS 20
+
 static enum iqs7211e_gestures_event iqs7211e_get_touchpad_event(const struct iqs7211e_data *data);
 static bool iqs7211e_init_state(struct iqs7211e_data *data);
-static uint16_t iqs7211e_get_product_num(struct iqs7211e_data *data);
+static int iqs7211e_get_product_num(struct iqs7211e_data *data);
 static int iqs7211e_read_info_flags(const struct iqs7211e_data *data, uint8_t *info_flags);
-static bool iqs7211e_check_reset(struct iqs7211e_data *data);
+static int iqs7211e_check_reset(struct iqs7211e_data *data);
 static int iqs7211e_acknowledge_reset(struct iqs7211e_data *data);
 static bool iqs7211e_read_ati_active(struct iqs7211e_data *data);
 static int iqs7211e_read_bytes(const struct i2c_dt_spec *i2c, uint8_t reg, uint8_t *buf, size_t len);
 static int iqs7211e_write_bytes(const struct i2c_dt_spec *i2c, uint8_t reg, const uint8_t *data, size_t numBytes);
 static void iqs7211e_work_handler(struct k_work *work);
 static void iqs7211e_stationary_report_work_handler(struct k_work *work);
-static void iqs7211e_report_data(struct iqs7211e_data *data);
+static void iqs7211e_click_work_handler(struct k_work *work);
+static void iqs7211e_queue_clicks(struct iqs7211e_data *data, uint16_t button, uint8_t clicks);
+static int iqs7211e_report_data(struct iqs7211e_data *data);
 static void iqs7211e_gpio_callback(const struct device *port, struct gpio_callback *cb, gpio_port_pins_t pins);
 static int iqs7211e_write_defaults(struct iqs7211e_data *data);
 static int iqs7211e_sw_reset(struct iqs7211e_data *data);
+#ifdef CONFIG_PM_DEVICE
+static int iqs7211e_set_suspend_state(struct iqs7211e_data *data, bool suspend);
+#endif
 static int iqs7211e_run_ati(struct iqs7211e_data *data);
 static int iqs7211e_queue_value_updates(struct iqs7211e_data *data);
 static int iqs7211e_set_event_mode(struct iqs7211e_data *data);
@@ -41,7 +49,6 @@ static bool iqs7211e_layer_allowed(const uint8_t *layers, uint8_t layer_count);
 static bool iqs7211e_scroll_trigger_layer_allowed(const struct iqs7211e_config *config);
 static bool iqs7211e_stationary_report_layer_allowed(const struct iqs7211e_config *config);
 static bool iqs7211e_stationary_report_allowed(const struct iqs7211e_data *data);
-static bool iqs7211e_stationary_touch_still_present(struct iqs7211e_data *data);
 static void iqs7211e_stationary_report_release_touch(struct iqs7211e_data *data);
 static uint8_t iqs7211e_get_bit(uint8_t byte, uint8_t pos);
 static uint8_t iqs7211e_get_num_fingers_from_info_flags(const uint8_t *info_flags);
@@ -55,20 +62,35 @@ static bool iqs7211e_init_state(struct iqs7211e_data *data)
     switch (data->init_state)
     {
     case IQS7211E_INIT_VERIFY_PRODUCT:
-        uint16_t prod_num = iqs7211e_get_product_num(data);
-        if (prod_num == IQS7211E_PRODUCT_NUM)
+    {
+        int prod_num = iqs7211e_get_product_num(data);
+        if (prod_num < 0)
+        {
+            /* A transient bus error is retried on the next RDY interrupt. */
+            LOG_ERR("product number read failed: %d - retrying", prod_num);
+        }
+        else if (prod_num == IQS7211E_PRODUCT_NUM)
         {
             data->init_state = IQS7211E_INIT_READ_RESET;
         }
         else
         {
-            LOG_ERR("prod_num != IQS7211E_PRODUCT_NUM, init_state = IQS7211E_INIT_NONE");
+            /* A successful read of another product is not transient. */
+            LOG_ERR("product number read %d, expected %d - disabling device",
+                    prod_num, IQS7211E_PRODUCT_NUM);
             data->init_state = IQS7211E_INIT_NONE;
         }
         break;
+    }
 
     case IQS7211E_INIT_READ_RESET:
-        if (iqs7211e_check_reset(data))
+        ret = iqs7211e_check_reset(data);
+        if (ret < 0)
+        {
+            /* Retry the read instead of mistaking an I2C error for no reset. */
+            break;
+        }
+        if (ret > 0)
         {
             data->init_state = IQS7211E_INIT_UPDATE_SETTINGS;
             data->reset_called = false;
@@ -144,7 +166,10 @@ static bool iqs7211e_init_state(struct iqs7211e_data *data)
     return false;
 }
 
-static uint16_t iqs7211e_get_product_num(struct iqs7211e_data *data)
+/* Returns the product number, or a negative errno if the read failed. The
+   return type must stay signed: truncating an errno into uint16_t made a bus
+   error indistinguishable from a wrong part. */
+static int iqs7211e_get_product_num(struct iqs7211e_data *data)
 {
     const struct iqs7211e_config *config = data->dev->config;
     uint8_t buf[2];
@@ -169,14 +194,14 @@ static int iqs7211e_read_info_flags(const struct iqs7211e_data *data, uint8_t *i
     return 0;
 }
 
-static bool iqs7211e_check_reset(struct iqs7211e_data *data)
+static int iqs7211e_check_reset(struct iqs7211e_data *data)
 {
     uint8_t info_flags[2];
     int ret;
     ret = iqs7211e_read_info_flags(data, info_flags);
     if (ret < 0)
     {
-        return false;
+        return ret;
     }
     LOG_DBG("Info Flags: %02X %02X", info_flags[0], info_flags[1]);
     return (info_flags[0] & (1 << IQS7211E_SHOW_RESET_BIT)) != 0;
@@ -206,6 +231,41 @@ static int iqs7211e_sw_reset(struct iqs7211e_data *data)
     return 0;
 }
 
+#ifdef CONFIG_PM_DEVICE
+static int iqs7211e_set_suspend_state(struct iqs7211e_data *data, bool suspend)
+{
+    const struct iqs7211e_config *config = data->dev->config;
+    uint8_t command[2] = {SYSTEM_CONTROL_0, SYSTEM_CONTROL_1};
+
+    if (suspend)
+    {
+        command[1] |= BIT(IQS7211E_SUSPEND_BIT);
+    }
+    else
+    {
+        command[1] &= ~BIT(IQS7211E_SUSPEND_BIT);
+    }
+
+    /*
+     * While suspended, writing the cleared command forces an I2C communication
+     * window and wakes the device as specified by the IQS7211E datasheet.
+     * System Control has no persistent non-zero fields in this configuration,
+     * so starting from the exported defaults also avoids replaying stale
+     * one-shot reset/re-ATI commands read from the device.
+     */
+    int ret = iqs7211e_write_bytes(&config->i2c, IQS7211E_MM_SYS_CONTROL,
+                                   command, sizeof(command));
+    if (ret < 0)
+    {
+        LOG_ERR("Failed to %s IQS7211E: %d", suspend ? "suspend" : "resume", ret);
+        return ret;
+    }
+
+    LOG_DBG("IQS7211E hardware %s", suspend ? "suspended" : "resumed");
+    return 0;
+}
+#endif
+
 static int iqs7211e_acknowledge_reset(struct iqs7211e_data *data)
 {
     const struct iqs7211e_config *config = data->dev->config;
@@ -231,7 +291,7 @@ static int iqs7211e_acknowledge_reset(struct iqs7211e_data *data)
     return 0;
 }
 
-int iqs7211e_run_ati(struct iqs7211e_data *data)
+static int iqs7211e_run_ati(struct iqs7211e_data *data)
 {
     const struct iqs7211e_config *config = data->dev->config;
     uint8_t command[2];
@@ -450,40 +510,6 @@ static uint8_t iqs7211e_get_num_fingers_from_info_flags(const uint8_t *info_flag
 static uint8_t iqs7211e_get_num_fingers(const struct iqs7211e_data *data)
 {
     return iqs7211e_get_num_fingers_from_info_flags(data->info_flags);
-}
-
-static bool iqs7211e_stationary_touch_still_present(struct iqs7211e_data *data)
-{
-    const struct iqs7211e_config *config = data->dev->config;
-
-    if (config->stationary_touch_verify_interval_ms == 0)
-    {
-        return true;
-    }
-
-    uint32_t now = k_uptime_get_32();
-    if ((uint32_t)(now - data->stationary_last_verify_uptime_ms) <
-        config->stationary_touch_verify_interval_ms)
-    {
-        return true;
-    }
-
-    uint8_t info_flags[2];
-    if (iqs7211e_read_info_flags(data, info_flags) < 0)
-    {
-        LOG_WRN("Stationary touch verify failed; stopping stationary reports");
-        return false;
-    }
-
-    data->stationary_last_verify_uptime_ms = now;
-
-    if (iqs7211e_get_num_fingers_from_info_flags(info_flags) == 0)
-    {
-        LOG_DBG("Stationary touch verify found no fingers");
-        return false;
-    }
-
-    return true;
 }
 
 static void iqs7211e_stationary_report_release_touch(struct iqs7211e_data *data)
@@ -829,11 +855,80 @@ static int iqs7211e_write_bytes(const struct i2c_dt_spec *i2c, uint8_t reg, cons
 static void iqs7211e_work_handler(struct k_work *work)
 {
     struct iqs7211e_data *data = CONTAINER_OF(work, struct iqs7211e_data, work);
+    if (atomic_get(&data->suspended))
+    {
+        return;
+    }
+
     if (iqs7211e_init_state(data))
     {
-        iqs7211e_report_data(data);
+        int ret = iqs7211e_report_data(data);
+        if (ret < 0 && data->stationary_verify_pending)
+        {
+            LOG_WRN("Stationary touch verify failed; releasing touch");
+            iqs7211e_stationary_report_release_touch(data);
+        }
     }
-    set_gpio_interrupt(data->dev, true);
+    data->stationary_verify_pending = false;
+
+    if (!atomic_get(&data->suspended) && set_gpio_interrupt(data->dev, true) < 0)
+    {
+        LOG_ERR("Failed to re-enable IQS7211E interrupt");
+    }
+}
+
+/*
+ * Emit one press or release edge, then reschedule until the requested number of
+ * clicks has been played out. This runs on the system workqueue like the rest
+ * of the driver, but yields between edges instead of sleeping, so a triple tap
+ * no longer holds the queue for 120ms.
+ */
+static void iqs7211e_click_work_handler(struct k_work *work)
+{
+    struct k_work_delayable *d_work = k_work_delayable_from_work(work);
+    struct iqs7211e_data *data = CONTAINER_OF(d_work, struct iqs7211e_data, click_work);
+
+    if (atomic_get(&data->suspended) || data->click_edges == 0)
+    {
+        return;
+    }
+
+    /* An even number of edges left means the next one opens a click. */
+    bool press = (data->click_edges % 2) == 0;
+    input_report_key(data->dev, data->click_button, press, true, K_FOREVER);
+    data->click_edges--;
+
+    if (data->click_edges > 0)
+    {
+        k_work_reschedule(&data->click_work, K_MSEC(IQS7211E_CLICK_EDGE_MS));
+    }
+}
+
+/*
+ * Queue `clicks` press/release pairs on `button`. If a tap arrives while a
+ * previous sequence is still playing, the old one is released first so the
+ * button cannot be left stuck down.
+ */
+static void iqs7211e_queue_clicks(struct iqs7211e_data *data, uint16_t button, uint8_t clicks)
+{
+    if (atomic_get(&data->suspended))
+    {
+        return;
+    }
+
+    if (data->click_edges > 0)
+    {
+        /* Mid-sequence: an odd count means a press is currently outstanding. */
+        if ((data->click_edges % 2) == 1)
+        {
+            input_report_key(data->dev, data->click_button, false, true, K_FOREVER);
+        }
+        data->click_edges = 0;
+    }
+
+    data->click_button = button;
+    data->click_edges = clicks * 2;
+    k_work_reschedule(&data->click_work, K_NO_WAIT);
 }
 
 static void iqs7211e_stationary_report_work_handler(struct k_work *work)
@@ -842,14 +937,34 @@ static void iqs7211e_stationary_report_work_handler(struct k_work *work)
     struct iqs7211e_data *data = CONTAINER_OF(d_work, struct iqs7211e_data, stationary_report_work);
     const struct iqs7211e_config *config = data->dev->config;
 
-    if (!iqs7211e_stationary_report_allowed(data))
+    if (atomic_get(&data->suspended) || !iqs7211e_stationary_report_allowed(data))
     {
         return;
     }
 
-    if (!iqs7211e_stationary_touch_still_present(data))
+    uint32_t now = k_uptime_get_32();
+    if (config->stationary_touch_verify_interval_ms > 0 &&
+        (uint32_t)(now - data->stationary_last_verify_uptime_ms) >=
+            config->stationary_touch_verify_interval_ms)
     {
-        iqs7211e_stationary_report_release_touch(data);
+        /*
+         * Verification must consume the complete report packet. A partial
+         * INFO_FLAGS read followed by STOP can close an RDY window that was
+         * opened for a gesture or coordinate event, losing that event before
+         * the normal report work gets to it. Queue the regular report path
+         * with the IRQ masked so it is the sole owner of this communication
+         * window.
+         */
+        data->stationary_verify_pending = true;
+        if (set_gpio_interrupt(data->dev, false) < 0 || k_work_submit(&data->work) < 0)
+        {
+            data->stationary_verify_pending = false;
+            iqs7211e_stationary_report_release_touch(data);
+            if (set_gpio_interrupt(data->dev, true) < 0)
+            {
+                LOG_ERR("Failed to restore IQS7211E interrupt after verify failure");
+            }
+        }
         return;
     }
 
@@ -862,53 +977,71 @@ static void iqs7211e_stationary_report_work_handler(struct k_work *work)
     }
 }
 
-static void iqs7211e_report_data(struct iqs7211e_data *data)
+static int iqs7211e_report_data(struct iqs7211e_data *data)
 {
     const struct iqs7211e_config *config = data->dev->config;
-    if (iqs7211e_queue_value_updates(data) < 0)
+    int ret = iqs7211e_queue_value_updates(data);
+    if (ret < 0)
     {
-        return;
+        return ret;
     }
     uint8_t num_fingers = iqs7211e_get_num_fingers(data);
     uint8_t gesture_event = iqs7211e_get_touchpad_event(data);
 
     /* 1. Canonicalize coordinates (Normalized to user orientation) */
-    /* If no fingers, use last known coordinates to avoid jump to (0,0) */
-    int16_t raw_x = (num_fingers > 0) ? data->finger_1_x : data->finger_1_prev_x;
-    int16_t raw_y = (num_fingers > 0) ? data->finger_1_y : data->finger_1_prev_y;
+    int16_t x;
+    int16_t y;
 
-    int16_t x = raw_x;
-    int16_t y = raw_y;
+    if (num_fingers > 0)
+    {
+        int16_t raw_x = data->finger_1_x;
+        int16_t raw_y = data->finger_1_y;
 
-    if (config->rotate_cw == 1)
-    {
-        /*
-         * Rotation 90deg CW:
-         * X = (MaxY) - raw_y
-         * Y = raw_x
-         */
-        x = RESOLUTION_Y - raw_y;
-        y = raw_x;
+        x = raw_x;
+        y = raw_y;
+
+        if (config->rotate_cw == 1)
+        {
+            /*
+             * Rotation 90deg CW:
+             * X = (MaxY) - raw_y
+             * Y = raw_x
+             */
+            x = RESOLUTION_Y - raw_y;
+            y = raw_x;
+        }
+        else if (config->rotate_cw == 2)
+        {
+            /*
+             * Rotation 180deg CW:
+             * X = (MaxX) - raw_x
+             * Y = (MaxY) - raw_y
+             */
+            x = RESOLUTION_X - raw_x;
+            y = RESOLUTION_Y - raw_y;
+        }
+        else if (config->rotate_cw == 3)
+        {
+            /*
+             * Rotation 270deg CW:
+             * X = raw_y
+             * Y = (MaxX) - raw_x
+             */
+            x = raw_y;
+            y = RESOLUTION_X - raw_x;
+        }
     }
-    else if (config->rotate_cw == 2)
+    else
     {
         /*
-         * Rotation 180deg CW:
-         * X = (MaxX) - raw_x
-         * Y = (MaxY) - raw_y
+         * No fingers: reuse the last reported position so the pointer does not
+         * jump to (0,0). finger_1_prev_* is stored after normalization, so it
+         * must not be rotated a second time - doing so mirrors the release
+         * coordinate whenever rotate-cw is non-zero, and disagrees with the
+         * stationary-report paths, which use finger_1_prev_* directly.
          */
-        x = RESOLUTION_X - raw_x;
-        y = RESOLUTION_Y - raw_y;
-    }
-    else if (config->rotate_cw == 3)
-    {
-        /*
-         * Rotation 270deg CW:
-         * X = raw_y
-         * Y = (MaxX) - raw_x
-         */
-        x = raw_y;
-        y = RESOLUTION_X - raw_x;
+        x = data->finger_1_prev_x;
+        y = data->finger_1_prev_y;
     }
 
     LOG_DBG("Fingers: %d, Gesture: %d, Mode: %s", num_fingers, gesture_event, config->report_abs ? "Abs" : "Rel");
@@ -935,8 +1068,17 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
             dy = data->finger_1_prev_dy;
         }
 
-        smooth_dx = (dx + data->finger_1_prev_dx) >> 1;
-        smooth_dy = (dy + data->finger_1_prev_dy) >> 1;
+        /*
+         * Use division, not an arithmetic shift. `>> 1` rounds towards
+         * negative infinity, so an odd sum loses half a count in the positive
+         * direction but gains half a count in the negative one. That leaves a
+         * constant negative offset of about 0.25 counts per report on every
+         * axis that is moving, which is large enough to cancel out - or even
+         * invert - slow movement. Division truncates towards zero, so both
+         * directions are attenuated equally.
+         */
+        smooth_dx = (dx + data->finger_1_prev_dx) / 2;
+        smooth_dy = (dy + data->finger_1_prev_dy) / 2;
     }
 
     /* 3. Input Reporting and Synchronization */
@@ -979,33 +1121,19 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
             case IQS7211E_GESTURE_SINGLE_TAP:
                 if (config->single_tap >= 0)
                 {
-                    input_report_key(data->dev, INPUT_BTN_0 + config->single_tap, true, true, K_FOREVER);
-                    k_msleep(20);
-                    input_report_key(data->dev, INPUT_BTN_0 + config->single_tap, false, true, K_FOREVER);
+                    iqs7211e_queue_clicks(data, INPUT_BTN_0 + config->single_tap, 1);
                 }
                 break;
             case IQS7211E_GESTURE_DOUBLE_TAP:
                 if (config->double_tap >= 0)
                 {
-                    for (int i = 0; i < 2; i++)
-                    {
-                        input_report_key(data->dev, INPUT_BTN_0 + config->double_tap, true, true, K_FOREVER);
-                        k_msleep(20);
-                        input_report_key(data->dev, INPUT_BTN_0 + config->double_tap, false, true, K_FOREVER);
-                        k_msleep(20);
-                    }
+                    iqs7211e_queue_clicks(data, INPUT_BTN_0 + config->double_tap, 2);
                 }
                 break;
             case IQS7211E_GESTURE_TRIPLE_TAP:
                 if (config->triple_tap >= 0)
                 {
-                    for (int i = 0; i < 3; i++)
-                    {
-                        input_report_key(data->dev, INPUT_BTN_0 + config->triple_tap, true, true, K_FOREVER);
-                        k_msleep(20);
-                        input_report_key(data->dev, INPUT_BTN_0 + config->triple_tap, false, true, K_FOREVER);
-                        k_msleep(20);
-                    }
+                    iqs7211e_queue_clicks(data, INPUT_BTN_0 + config->triple_tap, 3);
                 }
                 break;
             default:
@@ -1056,33 +1184,19 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
             case IQS7211E_GESTURE_SINGLE_TAP:
                 if (config->single_tap >= 0)
                 {
-                    input_report_key(data->dev, INPUT_BTN_0 + config->single_tap, true, true, K_FOREVER);
-                    k_msleep(20);
-                    input_report_key(data->dev, INPUT_BTN_0 + config->single_tap, false, true, K_FOREVER);
+                    iqs7211e_queue_clicks(data, INPUT_BTN_0 + config->single_tap, 1);
                 }
                 break;
             case IQS7211E_GESTURE_DOUBLE_TAP:
                 if (config->double_tap >= 0)
                 {
-                    for (int i = 0; i < 2; i++)
-                    {
-                        input_report_key(data->dev, INPUT_BTN_0 + config->double_tap, true, true, K_FOREVER);
-                        k_msleep(20);
-                        input_report_key(data->dev, INPUT_BTN_0 + config->double_tap, false, true, K_FOREVER);
-                        k_msleep(20);
-                    }
+                    iqs7211e_queue_clicks(data, INPUT_BTN_0 + config->double_tap, 2);
                 }
                 break;
             case IQS7211E_GESTURE_TRIPLE_TAP:
                 if (config->triple_tap >= 0)
                 {
-                    for (int i = 0; i < 3; i++)
-                    {
-                        input_report_key(data->dev, INPUT_BTN_0 + config->triple_tap, true, true, K_FOREVER);
-                        k_msleep(20);
-                        input_report_key(data->dev, INPUT_BTN_0 + config->triple_tap, false, true, K_FOREVER);
-                        k_msleep(20);
-                    }
+                    iqs7211e_queue_clicks(data, INPUT_BTN_0 + config->triple_tap, 3);
                 }
                 break;
             default:
@@ -1145,6 +1259,8 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
             k_work_cancel_delayable(&data->stationary_report_work);
         }
     }
+
+    return 0;
 }
 
 static int set_gpio_interrupt(const struct device *dev, const bool en)
@@ -1163,8 +1279,19 @@ static int set_gpio_interrupt(const struct device *dev, const bool en)
 static void iqs7211e_gpio_callback(const struct device *port, struct gpio_callback *cb, gpio_port_pins_t pins)
 {
     struct iqs7211e_data *data = CONTAINER_OF(cb, struct iqs7211e_data, gpio_cb);
-    set_gpio_interrupt(data->dev, false);
-    k_work_submit(&data->work);
+    if (atomic_get(&data->suspended))
+    {
+        return;
+    }
+
+    if (set_gpio_interrupt(data->dev, false) < 0 || k_work_submit(&data->work) < 0)
+    {
+        LOG_ERR("Failed to queue IQS7211E interrupt work");
+        if (!atomic_get(&data->suspended))
+        {
+            set_gpio_interrupt(data->dev, true);
+        }
+    }
 }
 
 static int iqs7211e_init(const struct device *dev)
@@ -1204,12 +1331,21 @@ static int iqs7211e_init(const struct device *dev)
     data->start_tap = 0;
     data->is_scroll_layer_active = false;
     data->last_touched_state = false;
+    data->stationary_verify_pending = false;
     data->stationary_last_verify_uptime_ms = 0;
     data->dev = dev;
+    atomic_clear(&data->suspended);
+    data->sensor_suspended = false;
 
     k_work_init(&data->work, iqs7211e_work_handler);
     k_work_init_delayable(&data->stationary_report_work, iqs7211e_stationary_report_work_handler);
-    set_gpio_interrupt(data->dev, true);
+    k_work_init_delayable(&data->click_work, iqs7211e_click_work_handler);
+    data->click_edges = 0;
+    ret = set_gpio_interrupt(data->dev, true);
+    if (ret < 0)
+    {
+        return ret;
+    }
 
     LOG_INF("IQS7211E driver initialized successfully");
     return 0;
@@ -1219,21 +1355,84 @@ static int iqs7211e_init(const struct device *dev)
 static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action action)
 {
     struct iqs7211e_data *data = dev->data;
+    const struct iqs7211e_config *config = dev->config;
+    int ret;
+
     switch (action)
     {
     case PM_DEVICE_ACTION_SUSPEND:
-        set_gpio_interrupt(dev, false);
-        data->last_touched_state = false;
-        data->stationary_last_verify_uptime_ms = 0;
+        /* Block every producer before draining work and mutable report state. */
+        atomic_set(&data->suspended, 1);
+        ret = set_gpio_interrupt(dev, false);
+        if (ret < 0)
+        {
+            atomic_clear(&data->suspended);
+            return ret;
+        }
+
+        k_work_cancel_sync(&data->work, &data->work_sync);
+        /* A running handler may have re-enabled the IRQ before it completed. */
+        ret = set_gpio_interrupt(dev, false);
+        if (ret < 0)
+        {
+            atomic_clear(&data->suspended);
+            return ret;
+        }
+
+        k_work_cancel_delayable_sync(&data->click_work, &data->click_work_sync);
+        if ((data->click_edges % 2) == 1)
+        {
+            /* A press was outstanding - do not suspend with the button held. */
+            input_report_key(dev, data->click_button, false, true, K_FOREVER);
+        }
+        data->click_edges = 0;
         k_work_cancel_delayable_sync(&data->stationary_report_work, &data->stationary_report_work_sync);
-        return k_work_cancel_sync(&data->work, &data->work_sync);
+
+        bool touch_was_active = data->last_touched_state;
+        iqs7211e_stationary_report_release_touch(data);
+        if (touch_was_active && !config->report_abs)
+        {
+            /* Flush the queued BTN_TOUCH release in relative mode. */
+            input_report_rel(dev, INPUT_REL_X, 0, true, K_FOREVER);
+        }
+
+        data->stationary_verify_pending = false;
+        data->stationary_last_verify_uptime_ms = 0;
+
+        if (data->init_state != IQS7211E_INIT_NONE)
+        {
+            ret = iqs7211e_set_suspend_state(data, true);
+            if (ret < 0)
+            {
+                atomic_clear(&data->suspended);
+                set_gpio_interrupt(dev, true);
+                return ret;
+            }
+            data->sensor_suspended = true;
+        }
+
+        return 0;
     case PM_DEVICE_ACTION_RESUME:
+        if (data->sensor_suspended)
+        {
+            ret = iqs7211e_set_suspend_state(data, false);
+            if (ret < 0)
+            {
+                return ret;
+            }
+            data->sensor_suspended = false;
+        }
+
         data->init_state = IQS7211E_INIT_VERIFY_PRODUCT;
+        data->reset_called = false;
         data->touch_count = 0;
         data->start_tap = 0;
         data->is_scroll_layer_active = false;
         data->last_touched_state = false;
+        data->stationary_verify_pending = false;
         data->stationary_last_verify_uptime_ms = 0;
+        data->click_edges = 0;
+        atomic_clear(&data->suspended);
         LOG_DBG("IQS7211E device resumed ");
         return set_gpio_interrupt(dev, true);
     default:
@@ -1254,7 +1453,32 @@ static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action ac
                      DT_INST_PROP(inst, stationary_report_layers);),                               \
                 ())
 
+#define IQS7211E_VALIDATE(inst)                                                                 \
+    BUILD_ASSERT(DT_INST_PROP_OR(inst, single_tap, -1) >= -1 &&                                 \
+                     DT_INST_PROP_OR(inst, single_tap, -1) <= INT8_MAX,                          \
+                 "single-tap must fit in int8_t and be at least -1");                           \
+    BUILD_ASSERT(DT_INST_PROP_OR(inst, double_tap, -1) >= -1 &&                                 \
+                     DT_INST_PROP_OR(inst, double_tap, -1) <= INT8_MAX,                          \
+                 "double-tap must fit in int8_t and be at least -1");                           \
+    BUILD_ASSERT(DT_INST_PROP_OR(inst, triple_tap, -1) >= -1 &&                                 \
+                     DT_INST_PROP_OR(inst, triple_tap, -1) <= INT8_MAX,                          \
+                 "triple-tap must fit in int8_t and be at least -1");                           \
+    BUILD_ASSERT(DT_INST_PROP_OR(inst, scroll_layer, -1) >= -1 &&                               \
+                     DT_INST_PROP_OR(inst, scroll_layer, -1) <= INT8_MAX,                        \
+                 "scroll-layer must fit in int8_t and be at least -1");                         \
+    BUILD_ASSERT(DT_INST_PROP_OR(inst, scroll_start, 40) >= 0 &&                                \
+                     DT_INST_PROP_OR(inst, scroll_start, 40) <= RESOLUTION_X,                    \
+                 "scroll-start must be within the coordinate range");                          \
+    BUILD_ASSERT(DT_INST_PROP_OR(inst, stationary_report_interval_ms, 0) >= 0 &&                 \
+                     DT_INST_PROP_OR(inst, stationary_report_interval_ms, 0) <= UINT16_MAX,      \
+                 "stationary-report-interval-ms must fit in uint16_t");                         \
+    BUILD_ASSERT(DT_INST_PROP_OR(inst, stationary_touch_verify_interval_ms, 120) >= 0 &&         \
+                     DT_INST_PROP_OR(inst, stationary_touch_verify_interval_ms, 120) <=          \
+                         UINT16_MAX,                                                             \
+                 "stationary-touch-verify-interval-ms must fit in uint16_t")
+
 #define IQS7211E_DEFINE(inst)                                                                   \
+    IQS7211E_VALIDATE(inst);                                                                    \
     IQS7211E_SCROLL_TRIGGER_LAYERS(inst)                                                        \
     IQS7211E_STATIONARY_REPORT_LAYERS(inst)                                                     \
     static struct iqs7211e_data iqs7211e_data_##inst;                                           \
