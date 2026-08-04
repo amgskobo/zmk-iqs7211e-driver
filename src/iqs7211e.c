@@ -21,7 +21,7 @@ LOG_MODULE_REGISTER(iqs7211e, CONFIG_ZMK_LOG_LEVEL);
 
 static enum iqs7211e_gestures_event iqs7211e_get_touchpad_event(const struct iqs7211e_data *data);
 static bool iqs7211e_init_state(struct iqs7211e_data *data);
-static uint16_t iqs7211e_get_product_num(struct iqs7211e_data *data);
+static int iqs7211e_get_product_num(struct iqs7211e_data *data);
 static int iqs7211e_read_info_flags(const struct iqs7211e_data *data, uint8_t *info_flags);
 static bool iqs7211e_check_reset(struct iqs7211e_data *data);
 static int iqs7211e_acknowledge_reset(struct iqs7211e_data *data);
@@ -55,15 +55,23 @@ static bool iqs7211e_init_state(struct iqs7211e_data *data)
     switch (data->init_state)
     {
     case IQS7211E_INIT_VERIFY_PRODUCT:
-        uint16_t prod_num = iqs7211e_get_product_num(data);
+        int prod_num = iqs7211e_get_product_num(data);
         if (prod_num == IQS7211E_PRODUCT_NUM)
         {
             data->init_state = IQS7211E_INIT_READ_RESET;
         }
         else
         {
-            LOG_ERR("prod_num != IQS7211E_PRODUCT_NUM, init_state = IQS7211E_INIT_NONE");
-            data->init_state = IQS7211E_INIT_NONE;
+            /*
+             * Stay in this state so the next interrupt retries, the same way
+             * every other state here handles a failure. Moving to INIT_NONE
+             * would be terminal: nothing switches on it and only driver init
+             * and PM resume ever assign a state again, so a single I2C error
+             * at startup - bus contention, chip not ready yet - would leave the
+             * trackpad dead until reboot.
+             */
+            LOG_ERR("product number read %d, expected %d - retrying",
+                    prod_num, IQS7211E_PRODUCT_NUM);
         }
         break;
 
@@ -144,7 +152,10 @@ static bool iqs7211e_init_state(struct iqs7211e_data *data)
     return false;
 }
 
-static uint16_t iqs7211e_get_product_num(struct iqs7211e_data *data)
+/* Returns the product number, or a negative errno if the read failed. The
+   return type must stay signed: truncating an errno into uint16_t made a bus
+   error indistinguishable from a wrong part. */
+static int iqs7211e_get_product_num(struct iqs7211e_data *data)
 {
     const struct iqs7211e_config *config = data->dev->config;
     uint8_t buf[2];
