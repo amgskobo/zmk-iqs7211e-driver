@@ -935,8 +935,17 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
             dy = data->finger_1_prev_dy;
         }
 
-        smooth_dx = (dx + data->finger_1_prev_dx) >> 1;
-        smooth_dy = (dy + data->finger_1_prev_dy) >> 1;
+        /*
+         * Use division, not an arithmetic shift. `>> 1` rounds towards
+         * negative infinity, so an odd sum loses half a count in the positive
+         * direction but gains half a count in the negative one. That leaves a
+         * constant negative offset of about 0.25 counts per report on every
+         * axis that is moving, which is large enough to cancel out - or even
+         * invert - slow movement. Division truncates towards zero, so both
+         * directions are attenuated equally.
+         */
+        smooth_dx = (dx + data->finger_1_prev_dx) / 2;
+        smooth_dy = (dy + data->finger_1_prev_dy) / 2;
     }
 
     /* 3. Input Reporting and Synchronization */
