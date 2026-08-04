@@ -60,7 +60,6 @@
 #define IQS7211E_GESTURE_SINGLE_TAP_BIT 0
 #define IQS7211E_GESTURE_DOUBLE_TAP_BIT 1
 #define IQS7211E_GESTURE_TRIPLE_TAP_BIT 2
-#define IQS7211E_GESTURE_PRESS_HOLD_BIT 3
 #define IQS7211E_GESTURE_PALM_GESTURE_BIT 4
 #define IQS7211E_GESTURE_SWIPE_X_POSITIVE_BIT 0      // 8
 #define IQS7211E_GESTURE_SWIPE_X_NEGATIVE_BIT 1      // 9
@@ -111,7 +110,6 @@ enum iqs7211e_gestures_event
     IQS7211E_GESTURE_SINGLE_TAP,
     IQS7211E_GESTURE_DOUBLE_TAP,
     IQS7211E_GESTURE_TRIPLE_TAP,
-    IQS7211E_GESTURE_PRESS_HOLD,
     IQS7211E_GESTURE_PALM_GESTURE,
     IQS7211E_GESTURE_SWIPE_X_POSITIVE,
     IQS7211E_GESTURE_SWIPE_X_NEGATIVE,
@@ -131,7 +129,6 @@ struct iqs7211e_config
     int8_t single_tap;
     int8_t double_tap;
     int8_t triple_tap;
-    int8_t press_hold;
     int8_t scroll_layer;
     uint16_t scroll_start;
     const uint8_t *scroll_trigger_layers;
@@ -157,7 +154,6 @@ struct iqs7211e_data
     uint8_t gestures[2];
     uint8_t info_flags[2];
     uint8_t touch_count;
-    uint8_t start_tap;
     /*
      * Tap gestures are emitted as press/release pairs from a delayed work item
      * rather than inline, because the report handler runs on the system
