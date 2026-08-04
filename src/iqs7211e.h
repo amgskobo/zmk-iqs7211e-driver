@@ -149,11 +149,12 @@ struct iqs7211e_data
      * workqueue and sleeping there stalls every other user of that queue.
      * click_edges is the number of edges still to emit - two per click, so a
      * triple tap starts at six - and click_button is the INPUT_BTN_* code.
+     * INPUT_BTN_0 is 0x100, so the button code needs 16 bits.
      */
     struct k_work_delayable click_work;
     struct k_work_sync click_work_sync;
     uint8_t click_edges;
-    uint8_t click_button;
+    uint16_t click_button;
     uint16_t finger_1_x;
     uint16_t finger_1_y;
     uint16_t finger_2_x;

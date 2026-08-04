@@ -34,7 +34,7 @@ static int iqs7211e_write_bytes(const struct i2c_dt_spec *i2c, uint8_t reg, cons
 static void iqs7211e_work_handler(struct k_work *work);
 static void iqs7211e_stationary_report_work_handler(struct k_work *work);
 static void iqs7211e_click_work_handler(struct k_work *work);
-static void iqs7211e_queue_clicks(struct iqs7211e_data *data, uint8_t button, uint8_t clicks);
+static void iqs7211e_queue_clicks(struct iqs7211e_data *data, uint16_t button, uint8_t clicks);
 static void iqs7211e_report_data(struct iqs7211e_data *data);
 static void iqs7211e_gpio_callback(const struct device *port, struct gpio_callback *cb, gpio_port_pins_t pins);
 static int iqs7211e_write_defaults(struct iqs7211e_data *data);
@@ -873,7 +873,7 @@ static void iqs7211e_click_work_handler(struct k_work *work)
  * previous sequence is still playing, the old one is released first so the
  * button cannot be left stuck down.
  */
-static void iqs7211e_queue_clicks(struct iqs7211e_data *data, uint8_t button, uint8_t clicks)
+static void iqs7211e_queue_clicks(struct iqs7211e_data *data, uint16_t button, uint8_t clicks)
 {
     if (data->click_edges > 0)
     {
