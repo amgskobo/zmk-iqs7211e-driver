@@ -34,6 +34,16 @@
 
 /* Report Rates and Timing */
 /* Memory Map Position 0x28 - 0x32 */
+/*
+ * Fast-wake low-power profile:
+ * - Keep every report rate unchanged, preserving the existing worst-case
+ *   wake latency (LP1 50 ms, LP2 100 ms).
+ * - With no touch, enter LP1 after 5 s and defer LP2 until 60 s total. This
+ *   avoids expensive Idle scanning early without imposing LP2 latency during
+ *   short pauses.
+ * - A stationary touch enters Idle-Touch after 5 s. Its 15 ms report rate is
+ *   unchanged, so movement response remains as fast as Active mode.
+ */
 #define ACTIVE_MODE_REPORT_RATE_0                0x0F
 #define ACTIVE_MODE_REPORT_RATE_1                0x00
 #define IDLE_TOUCH_MODE_REPORT_RATE_0            0x0F
@@ -44,13 +54,13 @@
 #define LP1_MODE_REPORT_RATE_1                   0x00
 #define LP2_MODE_REPORT_RATE_0                   0x64
 #define LP2_MODE_REPORT_RATE_1                   0x00
-#define ACTIVE_MODE_TIMEOUT_0                    0x0A
+#define ACTIVE_MODE_TIMEOUT_0                    0x05
 #define ACTIVE_MODE_TIMEOUT_1                    0x00
-#define IDLE_TOUCH_MODE_TIMEOUT_0                0x1E
+#define IDLE_TOUCH_MODE_TIMEOUT_0                0x3C
 #define IDLE_TOUCH_MODE_TIMEOUT_1                0x00
-#define IDLE_MODE_TIMEOUT_0                      0x0F
+#define IDLE_MODE_TIMEOUT_0                      0x05
 #define IDLE_MODE_TIMEOUT_1                      0x00
-#define LP1_MODE_TIMEOUT_0                       0x0F
+#define LP1_MODE_TIMEOUT_0                       0x37
 #define LP1_MODE_TIMEOUT_1                       0x00
 #define REATI_RETRY_TIME                         0x05
 #define REF_UPDATE_TIME                          0x08
@@ -144,7 +154,8 @@
 #define ALP_CONVERSION_FREQUENCY_FRACTION_VALUE  0x1A
 #define TRACKPAD_HARDWARE_SETTINGS_0             0x03
 #define TRACKPAD_HARDWARE_SETTINGS_1             0x9C
-#define ALP_HARDWARE_SETTINGS_0                  0x23
+/* LP1 auto-prox: 8 cycles; LP2 auto-prox: 32 cycles; init delay unchanged. */
+#define ALP_HARDWARE_SETTINGS_0                  0x67
 #define ALP_HARDWARE_SETTINGS_1                  0x9C
 
 /* Trackpad Settings */
