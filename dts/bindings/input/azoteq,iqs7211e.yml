@@ -30,12 +30,6 @@ properties:
     description: |
       Set the button triggered by triple-tap.
       -1 = disabled, 0 = BTN_0, 1 = BTN_1, 2 = BTN_2
-  press-hold:
-    type: int
-    default: -1
-    description: |
-      Defined for compatibility, but disabled by the driver configuration.
-      It does not emit button events.
   scroll-layer:
     type: int
     default: -1

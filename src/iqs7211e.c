@@ -428,10 +428,6 @@ static enum iqs7211e_gestures_event iqs7211e_get_touchpad_event(const struct iqs
     {
         return IQS7211E_GESTURE_SINGLE_TAP;
     }
-    else if (iqs7211e_get_bit(data->gestures[0], IQS7211E_GESTURE_PRESS_HOLD_BIT))
-    {
-        return IQS7211E_GESTURE_PRESS_HOLD;
-    }
     else if (iqs7211e_get_bit(data->gestures[0], IQS7211E_GESTURE_PALM_GESTURE_BIT))
     {
         return IQS7211E_GESTURE_PALM_GESTURE;
@@ -539,12 +535,6 @@ static void iqs7211e_stationary_report_release_touch(struct iqs7211e_data *data)
         input_report_key(data->dev, INPUT_BTN_TOUCH, false, false, K_FOREVER);
         data->last_touched_state = false;
     }
-
-    if (data->start_tap == 1 && config->press_hold >= 0)
-    {
-        input_report_key(data->dev, INPUT_BTN_0 + config->press_hold, false, false, K_FOREVER);
-    }
-    data->start_tap = 0;
 
     if (config->report_abs)
     {
@@ -1129,13 +1119,6 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
         {
             switch (gesture_event)
             {
-            case IQS7211E_GESTURE_PRESS_HOLD:
-                if (config->press_hold >= 0 && data->start_tap == 0)
-                {
-                    input_report_key(data->dev, INPUT_BTN_0 + config->press_hold, true, true, K_FOREVER);
-                    data->start_tap = 1;
-                }
-                break;
             case IQS7211E_GESTURE_SINGLE_TAP:
                 if (config->single_tap >= 0)
                 {
@@ -1222,14 +1205,7 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
             }
         }
 
-        /* 4.3. Release press-hold if active (Always do this on lift-off) */
-        if (data->start_tap == 1)
-        {
-            input_report_key(data->dev, INPUT_BTN_0 + config->press_hold, false, true, K_FOREVER);
-            data->start_tap = 0;
-        }
-
-        /* 4.4. Reporting and Sync */
+        /* 4.3. Reporting and Sync */
         if (config->report_abs)
         {
             input_report_abs(data->dev, INPUT_ABS_X, x, false, K_FOREVER);
@@ -1346,7 +1322,6 @@ static int iqs7211e_init(const struct device *dev)
     }
     data->init_state = IQS7211E_INIT_VERIFY_PRODUCT;
     data->touch_count = 0;
-    data->start_tap = 0;
     data->is_scroll_layer_active = false;
     data->last_touched_state = false;
     data->stationary_verify_pending = false;
@@ -1444,7 +1419,6 @@ static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action ac
         data->init_state = IQS7211E_INIT_VERIFY_PRODUCT;
         data->reset_called = false;
         data->touch_count = 0;
-        data->start_tap = 0;
         data->is_scroll_layer_active = false;
         data->last_touched_state = false;
         data->stationary_verify_pending = false;
@@ -1506,7 +1480,6 @@ static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action ac
         .single_tap = DT_INST_PROP_OR(inst, single_tap, -1),                                    \
         .double_tap = DT_INST_PROP_OR(inst, double_tap, -1),                                    \
         .triple_tap = DT_INST_PROP_OR(inst, triple_tap, -1),                                    \
-        .press_hold = -1,                                                                       \
         .scroll_layer = DT_INST_PROP_OR(inst, scroll_layer, -1),                                \
         .scroll_start = DT_INST_PROP_OR(inst, scroll_start, 40),                                \
         .scroll_trigger_layers = COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, scroll_trigger_layers), \
