@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: MIT
  */
 
+#pragma once
+
 #include <zephyr/device.h>
 #include <zephyr/drivers/i2c.h>
 #include <zephyr/drivers/gpio.h>
