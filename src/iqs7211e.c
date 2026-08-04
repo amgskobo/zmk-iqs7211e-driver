@@ -19,6 +19,9 @@
 
 LOG_MODULE_REGISTER(iqs7211e, CONFIG_ZMK_LOG_LEVEL);
 
+/* Spacing between the press and release edges of a generated click. */
+#define IQS7211E_CLICK_EDGE_MS 20
+
 static enum iqs7211e_gestures_event iqs7211e_get_touchpad_event(const struct iqs7211e_data *data);
 static bool iqs7211e_init_state(struct iqs7211e_data *data);
 static uint16_t iqs7211e_get_product_num(struct iqs7211e_data *data);
@@ -30,6 +33,8 @@ static int iqs7211e_read_bytes(const struct i2c_dt_spec *i2c, uint8_t reg, uint8
 static int iqs7211e_write_bytes(const struct i2c_dt_spec *i2c, uint8_t reg, const uint8_t *data, size_t numBytes);
 static void iqs7211e_work_handler(struct k_work *work);
 static void iqs7211e_stationary_report_work_handler(struct k_work *work);
+static void iqs7211e_click_work_handler(struct k_work *work);
+static void iqs7211e_queue_clicks(struct iqs7211e_data *data, uint8_t button, uint8_t clicks);
 static void iqs7211e_report_data(struct iqs7211e_data *data);
 static void iqs7211e_gpio_callback(const struct device *port, struct gpio_callback *cb, gpio_port_pins_t pins);
 static int iqs7211e_write_defaults(struct iqs7211e_data *data);
@@ -836,6 +841,55 @@ static void iqs7211e_work_handler(struct k_work *work)
     set_gpio_interrupt(data->dev, true);
 }
 
+/*
+ * Emit one press or release edge, then reschedule until the requested number of
+ * clicks has been played out. This runs on the system workqueue like the rest
+ * of the driver, but yields between edges instead of sleeping, so a triple tap
+ * no longer holds the queue for 120ms.
+ */
+static void iqs7211e_click_work_handler(struct k_work *work)
+{
+    struct k_work_delayable *d_work = k_work_delayable_from_work(work);
+    struct iqs7211e_data *data = CONTAINER_OF(d_work, struct iqs7211e_data, click_work);
+
+    if (data->click_edges == 0)
+    {
+        return;
+    }
+
+    /* An even number of edges left means the next one opens a click. */
+    bool press = (data->click_edges % 2) == 0;
+    input_report_key(data->dev, data->click_button, press, true, K_FOREVER);
+    data->click_edges--;
+
+    if (data->click_edges > 0)
+    {
+        k_work_reschedule(&data->click_work, K_MSEC(IQS7211E_CLICK_EDGE_MS));
+    }
+}
+
+/*
+ * Queue `clicks` press/release pairs on `button`. If a tap arrives while a
+ * previous sequence is still playing, the old one is released first so the
+ * button cannot be left stuck down.
+ */
+static void iqs7211e_queue_clicks(struct iqs7211e_data *data, uint8_t button, uint8_t clicks)
+{
+    if (data->click_edges > 0)
+    {
+        /* Mid-sequence: an odd count means a press is currently outstanding. */
+        if ((data->click_edges % 2) == 1)
+        {
+            input_report_key(data->dev, data->click_button, false, true, K_FOREVER);
+        }
+        data->click_edges = 0;
+    }
+
+    data->click_button = button;
+    data->click_edges = clicks * 2;
+    k_work_reschedule(&data->click_work, K_NO_WAIT);
+}
+
 static void iqs7211e_stationary_report_work_handler(struct k_work *work)
 {
     struct k_work_delayable *d_work = k_work_delayable_from_work(work);
@@ -979,33 +1033,19 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
             case IQS7211E_GESTURE_SINGLE_TAP:
                 if (config->single_tap >= 0)
                 {
-                    input_report_key(data->dev, INPUT_BTN_0 + config->single_tap, true, true, K_FOREVER);
-                    k_msleep(20);
-                    input_report_key(data->dev, INPUT_BTN_0 + config->single_tap, false, true, K_FOREVER);
+                    iqs7211e_queue_clicks(data, INPUT_BTN_0 + config->single_tap, 1);
                 }
                 break;
             case IQS7211E_GESTURE_DOUBLE_TAP:
                 if (config->double_tap >= 0)
                 {
-                    for (int i = 0; i < 2; i++)
-                    {
-                        input_report_key(data->dev, INPUT_BTN_0 + config->double_tap, true, true, K_FOREVER);
-                        k_msleep(20);
-                        input_report_key(data->dev, INPUT_BTN_0 + config->double_tap, false, true, K_FOREVER);
-                        k_msleep(20);
-                    }
+                    iqs7211e_queue_clicks(data, INPUT_BTN_0 + config->double_tap, 2);
                 }
                 break;
             case IQS7211E_GESTURE_TRIPLE_TAP:
                 if (config->triple_tap >= 0)
                 {
-                    for (int i = 0; i < 3; i++)
-                    {
-                        input_report_key(data->dev, INPUT_BTN_0 + config->triple_tap, true, true, K_FOREVER);
-                        k_msleep(20);
-                        input_report_key(data->dev, INPUT_BTN_0 + config->triple_tap, false, true, K_FOREVER);
-                        k_msleep(20);
-                    }
+                    iqs7211e_queue_clicks(data, INPUT_BTN_0 + config->triple_tap, 3);
                 }
                 break;
             default:
@@ -1056,33 +1096,19 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
             case IQS7211E_GESTURE_SINGLE_TAP:
                 if (config->single_tap >= 0)
                 {
-                    input_report_key(data->dev, INPUT_BTN_0 + config->single_tap, true, true, K_FOREVER);
-                    k_msleep(20);
-                    input_report_key(data->dev, INPUT_BTN_0 + config->single_tap, false, true, K_FOREVER);
+                    iqs7211e_queue_clicks(data, INPUT_BTN_0 + config->single_tap, 1);
                 }
                 break;
             case IQS7211E_GESTURE_DOUBLE_TAP:
                 if (config->double_tap >= 0)
                 {
-                    for (int i = 0; i < 2; i++)
-                    {
-                        input_report_key(data->dev, INPUT_BTN_0 + config->double_tap, true, true, K_FOREVER);
-                        k_msleep(20);
-                        input_report_key(data->dev, INPUT_BTN_0 + config->double_tap, false, true, K_FOREVER);
-                        k_msleep(20);
-                    }
+                    iqs7211e_queue_clicks(data, INPUT_BTN_0 + config->double_tap, 2);
                 }
                 break;
             case IQS7211E_GESTURE_TRIPLE_TAP:
                 if (config->triple_tap >= 0)
                 {
-                    for (int i = 0; i < 3; i++)
-                    {
-                        input_report_key(data->dev, INPUT_BTN_0 + config->triple_tap, true, true, K_FOREVER);
-                        k_msleep(20);
-                        input_report_key(data->dev, INPUT_BTN_0 + config->triple_tap, false, true, K_FOREVER);
-                        k_msleep(20);
-                    }
+                    iqs7211e_queue_clicks(data, INPUT_BTN_0 + config->triple_tap, 3);
                 }
                 break;
             default:
@@ -1209,6 +1235,8 @@ static int iqs7211e_init(const struct device *dev)
 
     k_work_init(&data->work, iqs7211e_work_handler);
     k_work_init_delayable(&data->stationary_report_work, iqs7211e_stationary_report_work_handler);
+    k_work_init_delayable(&data->click_work, iqs7211e_click_work_handler);
+    data->click_edges = 0;
     set_gpio_interrupt(data->dev, true);
 
     LOG_INF("IQS7211E driver initialized successfully");
@@ -1225,6 +1253,13 @@ static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action ac
         set_gpio_interrupt(dev, false);
         data->last_touched_state = false;
         data->stationary_last_verify_uptime_ms = 0;
+        k_work_cancel_delayable_sync(&data->click_work, &data->click_work_sync);
+        if ((data->click_edges % 2) == 1)
+        {
+            /* A press was outstanding - do not suspend with the button held. */
+            input_report_key(dev, data->click_button, false, true, K_FOREVER);
+        }
+        data->click_edges = 0;
         k_work_cancel_delayable_sync(&data->stationary_report_work, &data->stationary_report_work_sync);
         return k_work_cancel_sync(&data->work, &data->work_sync);
     case PM_DEVICE_ACTION_RESUME:
