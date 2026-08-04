@@ -938,42 +938,59 @@ static void iqs7211e_report_data(struct iqs7211e_data *data)
     uint8_t gesture_event = iqs7211e_get_touchpad_event(data);
 
     /* 1. Canonicalize coordinates (Normalized to user orientation) */
-    /* If no fingers, use last known coordinates to avoid jump to (0,0) */
-    int16_t raw_x = (num_fingers > 0) ? data->finger_1_x : data->finger_1_prev_x;
-    int16_t raw_y = (num_fingers > 0) ? data->finger_1_y : data->finger_1_prev_y;
+    int16_t x;
+    int16_t y;
 
-    int16_t x = raw_x;
-    int16_t y = raw_y;
+    if (num_fingers > 0)
+    {
+        int16_t raw_x = data->finger_1_x;
+        int16_t raw_y = data->finger_1_y;
 
-    if (config->rotate_cw == 1)
-    {
-        /*
-         * Rotation 90deg CW:
-         * X = (MaxY) - raw_y
-         * Y = raw_x
-         */
-        x = RESOLUTION_Y - raw_y;
-        y = raw_x;
+        x = raw_x;
+        y = raw_y;
+
+        if (config->rotate_cw == 1)
+        {
+            /*
+             * Rotation 90deg CW:
+             * X = (MaxY) - raw_y
+             * Y = raw_x
+             */
+            x = RESOLUTION_Y - raw_y;
+            y = raw_x;
+        }
+        else if (config->rotate_cw == 2)
+        {
+            /*
+             * Rotation 180deg CW:
+             * X = (MaxX) - raw_x
+             * Y = (MaxY) - raw_y
+             */
+            x = RESOLUTION_X - raw_x;
+            y = RESOLUTION_Y - raw_y;
+        }
+        else if (config->rotate_cw == 3)
+        {
+            /*
+             * Rotation 270deg CW:
+             * X = raw_y
+             * Y = (MaxX) - raw_x
+             */
+            x = raw_y;
+            y = RESOLUTION_X - raw_x;
+        }
     }
-    else if (config->rotate_cw == 2)
+    else
     {
         /*
-         * Rotation 180deg CW:
-         * X = (MaxX) - raw_x
-         * Y = (MaxY) - raw_y
+         * No fingers: reuse the last reported position so the pointer does not
+         * jump to (0,0). finger_1_prev_* is stored after normalization, so it
+         * must not be rotated a second time - doing so mirrors the release
+         * coordinate whenever rotate-cw is non-zero, and disagrees with the
+         * stationary-report paths, which use finger_1_prev_* directly.
          */
-        x = RESOLUTION_X - raw_x;
-        y = RESOLUTION_Y - raw_y;
-    }
-    else if (config->rotate_cw == 3)
-    {
-        /*
-         * Rotation 270deg CW:
-         * X = raw_y
-         * Y = (MaxX) - raw_x
-         */
-        x = raw_y;
-        y = RESOLUTION_X - raw_x;
+        x = data->finger_1_prev_x;
+        y = data->finger_1_prev_y;
     }
 
     LOG_DBG("Fingers: %d, Gesture: %d, Mode: %s", num_fingers, gesture_event, config->report_abs ? "Abs" : "Rel");
