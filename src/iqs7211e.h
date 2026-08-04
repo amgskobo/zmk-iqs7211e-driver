@@ -9,6 +9,7 @@
 #include <zephyr/device.h>
 #include <zephyr/drivers/i2c.h>
 #include <zephyr/drivers/gpio.h>
+#include <zephyr/kernel.h>
 
 // Regs
 #define IQS7211E_MM_PROD_NUM 0x00
@@ -140,6 +141,8 @@ struct iqs7211e_data
     struct k_work work;
     enum iqs7211e_init_state init_state;
     bool reset_called;
+    atomic_t suspended;
+    bool sensor_suspended;
     bool is_scroll_layer_active;
     uint8_t gestures[2];
     uint8_t info_flags[2];
@@ -166,6 +169,7 @@ struct iqs7211e_data
     int16_t finger_1_prev_dx;
     int16_t finger_1_prev_dy;
     bool last_touched_state;
+    bool stationary_verify_pending;
     uint32_t stationary_last_verify_uptime_ms;
     struct k_work_delayable stationary_report_work;
     struct k_work_sync stationary_report_work_sync;
