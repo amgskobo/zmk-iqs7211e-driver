@@ -46,16 +46,6 @@
 #define IQS7211E_NUM_FINGERS_BIT_0 0 // 8
 #define IQS7211E_NUM_FINGERS_BIT_1 1 //
 
-/*
- * Further info_flags[1] (high byte) bits, datasheet Table A.3. Diagnostics for
- * the hover investigation - all come from bytes already being read.
- *   ALP Output   = proximity/touch state of the ALP channel: a hover indicator
- *   TP Movement  = 0 when all touches are stationary (Section 7.5)
- */
-#define IQS7211E_TP_MOVEMENT_BIT 2      // 10
-#define IQS7211E_TOO_MANY_FINGERS_BIT 4 // 12
-#define IQS7211E_ALP_OUTPUT_BIT 6       // 14
-
 // Gesture Bits
 #define IQS7211E_GESTURE_SINGLE_TAP_BIT 0
 #define IQS7211E_GESTURE_DOUBLE_TAP_BIT 1
@@ -168,15 +158,6 @@ struct iqs7211e_data
     uint16_t click_button;
     uint16_t finger_1_x;
     uint16_t finger_1_y;
-    /*
-     * Diagnostics only (not used for any decision yet). Touch strength (0x12)
-     * and area (0x13) sit immediately after finger 1 X/Y, so they cost no extra
-     * I2C transaction. Logged to characterise hover vs. light touch.
-     */
-    uint16_t finger_1_strength;
-    uint16_t finger_1_area;
-    /* Previous Re-ATI-occurred flag, for edge-detecting a re-ATI event. */
-    bool prev_re_ati_occurred;
     uint16_t finger_2_x;
     uint16_t finger_2_y;
     uint16_t finger_1_prev_x;
