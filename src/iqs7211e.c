@@ -1376,14 +1376,28 @@ static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action ac
 
         if (data->init_state != IQS7211E_INIT_NONE)
         {
+            /*
+             * Putting the sensor itself to sleep is best-effort. The I2C
+             * controller has a lower init priority than this driver, so a
+             * caller that suspends devices in initialisation order - ZMK's
+             * soft-off does - has already disabled the bus by the time this
+             * runs, and the write fails with -EIO once the bus times out.
+             *
+             * Failing the suspend over that is worse than not sleeping the
+             * sensor: the driver side is already quiesced, which is what PM
+             * asked for, and returning an error aborted soft-off entirely
+             * while undoing the quiesce re-armed the interrupt on the way to
+             * power-off.
+             */
             ret = iqs7211e_set_suspend_state(data, true);
             if (ret < 0)
             {
-                atomic_clear(&data->suspended);
-                set_gpio_interrupt(dev, true);
-                return ret;
+                LOG_WRN("Sensor left running: bus unavailable at suspend (%d)", ret);
             }
-            data->sensor_suspended = true;
+            else
+            {
+                data->sensor_suspended = true;
+            }
         }
 
         return 0;
