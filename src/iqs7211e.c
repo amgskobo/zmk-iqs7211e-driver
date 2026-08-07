@@ -477,14 +477,44 @@ static bool iqs7211e_layer_allowed(const uint8_t *layers, uint8_t layer_count)
     return false;
 }
 
+/*
+ * A gesture belongs to the mode the board is in, so it takes the highest active
+ * layer: the top of the stack is what the user is driving.
+ */
 static bool iqs7211e_scroll_trigger_layer_allowed(const struct iqs7211e_config *config)
 {
     return iqs7211e_layer_allowed(config->scroll_trigger_layers, config->scroll_trigger_layer_count);
 }
 
+/*
+ * A resend belongs to whichever processor chain is running, which is a
+ * different question. ZMK picks that chain per event from the layer active at
+ * the moment, and by the first listener entry that matches - not by the highest
+ * layer. So a listed layer can be the one holding the chain while a higher one
+ * sits above it, and asking only about the top would withhold the resends the
+ * chain below is relying on, stopping a stationary contact dead.
+ *
+ * Any listed layer being active is the closest this side can get to that rule.
+ * It errs towards resending: a chain that does not need the repeats reads them
+ * as no movement, which costs nothing, while withholding them stops the
+ * pointer outright.
+ */
 static bool iqs7211e_stationary_report_layer_allowed(const struct iqs7211e_config *config)
 {
-    return iqs7211e_layer_allowed(config->stationary_report_layers, config->stationary_report_layer_count);
+    if (config->stationary_report_layer_count == 0)
+    {
+        return true;
+    }
+
+    for (uint8_t i = 0; i < config->stationary_report_layer_count; i++)
+    {
+        if (zmk_keymap_layer_active(config->stationary_report_layers[i]))
+        {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 static bool iqs7211e_stationary_report_allowed(const struct iqs7211e_data *data)

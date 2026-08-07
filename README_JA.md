@@ -34,7 +34,7 @@
 | `rotate-cw` | uint | 0 | **物理配置に合わせた時計回りの回転角度** (0=0°, 1=90°, 2=180°, 3=270°)。ドライバ内部でスクロールエリア判定も含めて一括して座標変換を行います。 |
 | `report-abs` | boolean | false | true の場合、相対座標ではなく絶対座標を報告します。 |
 | `stationary-report-interval-ms` | int | 0 | `report-abs` 有効時、タッチが継続している間に最後の絶対座標レポートをこの周期で再送します。0 で無効です。 |
-| `stationary-report-layers` | array | any | stationary absolute resend を許可する highest active layer。省略時はどのレイヤーでも再送します。 |
+| `stationary-report-layers` | array | any | stationary absolute resend を許可するレイヤー。上に別のレイヤーが乗っていても、列挙したいずれかが有効なら再送します。省略時はどのレイヤーでも再送します。 |
 | `stationary-touch-verify-interval-ms` | int | 120 | stationary resend 中、この周期で `INFO_FLAGS` を読み、タッチが残っているか確認します。0 で fail-safe 確認を無効化します。 |
 
 ### 2.1 絶対座標レポートモード
@@ -49,7 +49,9 @@ IQS7211E の Event Mode では、指を止めたままにすると新しいイ�
 
 `stationary-report-interval-ms` は、タッチ中に最後の `INPUT_ABS_X` / `INPUT_ABS_Y` を定期的に再送して、この入力パイプラインを動かし続けます。この機能は絶対座標レポートのワークフロー向けなので、デフォルトでは無効です。
 
-`stationary-report-layers` で、再送を許可する highest active layer を制限できます。レイヤーごとに絶対座標を別の入力プロセッサへ渡す構成で便利です。たとえば padstick レイヤーでは再送し、scroll や matrix レイヤーでは再送しない、という使い分けができます。
+`stationary-report-layers` で、再送を許可するレイヤーを制限できます。レイヤーごとに絶対座標を別の入力プロセッサへ渡す構成で便利です。たとえば padstick レイヤーでは再送し、scroll や matrix レイヤーでは再送しない、という使い分けができます。
+
+判定は「列挙したいずれかのレイヤーが有効か」で行い、上に別のレイヤーが乗っていても許可します。`scroll-trigger-layers` の highest active layer 判定とは意図的に異なります。ZMK はプロセッサチェーンをイベントごとに、その時点で有効なレイヤーから、かつリスナの**最初に一致した項目**で選びます（最上位レイヤーではありません）。そのため、列挙したレイヤーがチェーンを保持している最中に、より上のレイヤーが乗ることがあります。最上位だけを見ると、そのチェーンが頼っている再送を止めてしまい、静止した接触がそこで死にます。
 
 `stationary-touch-verify-interval-ms` は、stationary resend 中に `INFO_FLAGS` を定期的に確認します。読み取りに失敗した場合やセンサーが指なしを報告した場合、ドライバーはタッチを release して古い座標の再送を止めます。デフォルトは 120 ms です。この fail-safe が不要な場合のみ 0 にしてください。
 
@@ -62,7 +64,7 @@ stationary-report-layers = <1>;
 stationary-touch-verify-interval-ms = <120>;
 ```
 
-この例では、layer 1 が highest active layer の時だけ 20 ms ごとに stationary resend を行い、120 ms ごとにタッチの存在を確認します。
+この例では、layer 1 が有効な間は 20 ms ごとに stationary resend を行い、120 ms ごとにタッチの存在を確認します。
 
 ### 2.3 スクロールレイヤーの発火制御
 

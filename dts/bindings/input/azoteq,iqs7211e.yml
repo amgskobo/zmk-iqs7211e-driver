@@ -75,8 +75,17 @@ properties:
   stationary-report-layers:
     type: array
     description: |
-      Restrict stationary absolute coordinate resends to these highest active
-      layers. If omitted, stationary resends are allowed on any layer.
+      Restrict stationary absolute coordinate resends to these layers. Resends
+      are allowed whenever any listed layer is active, whether or not another
+      layer sits above it. If omitted, resends are allowed on any layer.
+
+      This is deliberately not the highest-active-layer test that
+      scroll-trigger-layers uses. ZMK chooses a processor chain per event from
+      the layer active at that moment, and by the first listener entry that
+      matches rather than by the highest layer, so a listed layer can be the
+      one holding the chain while a higher layer sits above it. Asking only
+      about the top would withhold the resends that chain relies on and stop a
+      stationary contact dead.
   stationary-touch-verify-interval-ms:
     type: int
     default: 120

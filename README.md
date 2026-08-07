@@ -33,7 +33,7 @@ The driver also implements touch gesture and scroll slider features:
 | `rotate-cw` | uint | 0 | **CW Rotation angle to match physical placement** (0=0°, 1=90°, 2=180°, 3=270°). Coordinates and scroll area are normalized internally. |
 | `report-abs` | boolean | false | If true, report absolute coordinates instead of relative ones. |
 | `stationary-report-interval-ms` | int | 0 | When `report-abs` is enabled, resend the last absolute coordinate report at this interval while touch remains active. Set to 0 to disable. |
-| `stationary-report-layers` | array | any | Highest active layers where stationary absolute resends are allowed. If omitted, stationary resends are allowed on any layer. |
+| `stationary-report-layers` | array | any | Layers on which stationary absolute resends are allowed. Any listed layer being active is enough, even with another layer above it. If omitted, resends are allowed on any layer. |
 | `stationary-touch-verify-interval-ms` | int | 120 | While stationary resends are active, read `INFO_FLAGS` at this interval to verify that touch is still present. Set to 0 to disable the fail-safe check. |
 
 ### 2.1 Absolute Pointer Report Mode
@@ -48,7 +48,9 @@ In IQS7211E Event Mode, the sensor may stop generating new events while a finger
 
 `stationary-report-interval-ms` keeps that pipeline alive by periodically resending the last `INPUT_ABS_X` / `INPUT_ABS_Y` report while touch remains active. The feature is disabled by default because it only applies to absolute-report workflows.
 
-`stationary-report-layers` limits the resend to specific highest active layers. This is useful when absolute coordinates feed different processors on different layers. For example, a padstick layer can receive stationary resends, while scroll or matrix layers can avoid them.
+`stationary-report-layers` limits the resend to specific layers. This is useful when absolute coordinates feed different processors on different layers. For example, a padstick layer can receive stationary resends, while scroll or matrix layers can avoid them.
+
+A resend is allowed whenever any listed layer is active, whether or not another layer sits above it - deliberately not the highest-active-layer test `scroll-trigger-layers` uses. ZMK chooses a processor chain per event from the layer active at that moment, and by the first listener entry that matches rather than by the highest layer, so a listed layer can be the one holding the chain while a higher layer sits above it. Asking only about the top would withhold the resends that chain relies on and stop a stationary contact dead.
 
 `stationary-touch-verify-interval-ms` periodically checks `INFO_FLAGS` while stationary resends are running. If the read fails or the sensor reports no fingers, the driver releases touch and stops resending stale coordinates. The default is 120 ms; set it to 0 only if this fail-safe is not wanted.
 
@@ -61,7 +63,7 @@ stationary-report-layers = <1>;
 stationary-touch-verify-interval-ms = <120>;
 ```
 
-In this example, stationary resends run every 20 ms only when layer 1 is the highest active layer, and touch presence is verified every 120 ms.
+In this example, stationary resends run every 20 ms whenever layer 1 is active, and touch presence is verified every 120 ms.
 
 ### 2.3 Scroll Layer Trigger Control
 
@@ -160,7 +162,7 @@ Add the IQS7211E node in your keyboard DTS overlay file (example of XIAO_BLE boa
         rotate-cw = <0>;
         // report-abs; // Use absolute coordinates (0-1024 inclusive)
         // stationary-report-interval-ms = <20>; // optional: resend stationary ABS reports
-        // stationary-report-layers = <1>; // optional: only these highest active layers may resend
+        // stationary-report-layers = <1>; // optional: resend only while one of these layers is active
         // stationary-touch-verify-interval-ms = <120>; // optional: verify touch during resends
     };
 };
