@@ -512,16 +512,28 @@ static void iqs7211e_stationary_report_release_touch(struct iqs7211e_data *data)
 {
     const struct iqs7211e_config *config = data->dev->config;
 
+    /*
+     * The coordinates belong to the touch being released, so they only go out
+     * with that release. Reporting them again on a second call would hand
+     * downstream a position with no touch behind it - and a processor that
+     * spends its first sample settling would already have spent it on the
+     * first pair, leaving the second to be read as real movement from wherever
+     * the finger happened to leave the pad.
+     *
+     * In absolute mode this pair also carries the sync that flushes the
+     * BTN_TOUCH release, which is the other reason it belongs inside here:
+     * with no release to flush there is nothing for it to do.
+     */
     if (data->last_touched_state)
     {
         input_report_key(data->dev, INPUT_BTN_TOUCH, false, false, K_FOREVER);
         data->last_touched_state = false;
-    }
 
-    if (config->report_abs)
-    {
-        input_report_abs(data->dev, INPUT_ABS_X, data->finger_1_prev_x, false, K_FOREVER);
-        input_report_abs(data->dev, INPUT_ABS_Y, data->finger_1_prev_y, true, K_FOREVER);
+        if (config->report_abs)
+        {
+            input_report_abs(data->dev, INPUT_ABS_X, data->finger_1_prev_x, false, K_FOREVER);
+            input_report_abs(data->dev, INPUT_ABS_Y, data->finger_1_prev_y, true, K_FOREVER);
+        }
     }
 
     if (data->is_scroll_layer_active && config->scroll_layer >= 0)
