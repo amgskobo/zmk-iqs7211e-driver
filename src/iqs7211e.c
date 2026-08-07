@@ -1164,7 +1164,9 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
         /* --- Path: Touch Released --- */
 
         /* 4.1. Touch State Toggle */
-        if (data->last_touched_state)
+        bool released_here = data->last_touched_state;
+
+        if (released_here)
         {
             input_report_key(data->dev, INPUT_BTN_TOUCH, false, false, K_FOREVER);
             data->last_touched_state = false;
@@ -1199,11 +1201,30 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
             }
         }
 
-        /* 4.3. Reporting and Sync */
+        /*
+         * 4.3. Reporting and Sync
+         *
+         * The coordinates go out only with the release they belong to. A report
+         * with no fingers can arrive when the touch has already been released -
+         * a tap gesture is delivered that way, and so is anything that follows a
+         * release taken by the stationary-verify path - and by then these are
+         * the last coordinates of a contact that is over. Sending them again
+         * hands downstream a position with no touch behind it: a processor that
+         * spends its first sample settling has already spent it on the release,
+         * so it reads the repeat as real movement away from wherever the finger
+         * left the pad, which at the far edge is a full-speed step.
+         *
+         * In absolute mode this pair also carries the sync that flushes the
+         * release. With no release to flush there is nothing for it to do; the
+         * gesture clicks queued above carry their own sync.
+         */
         if (config->report_abs)
         {
-            input_report_abs(data->dev, INPUT_ABS_X, x, false, K_FOREVER);
-            input_report_abs(data->dev, INPUT_ABS_Y, y, true, K_FOREVER);
+            if (released_here)
+            {
+                input_report_abs(data->dev, INPUT_ABS_X, x, false, K_FOREVER);
+                input_report_abs(data->dev, INPUT_ABS_Y, y, true, K_FOREVER);
+            }
         }
         else
         {
