@@ -90,7 +90,7 @@ properties:
     type: int
     default: 120
     description: |
-      While stationary resends are active, read INFO_FLAGS at this interval to
+      While stationary resends are active, run a full report read at this interval to
       verify that a touch is still present. If the read fails or no fingers are
       present, stop stationary resends and report touch release. Set to 0 to
       disable this fail-safe check.

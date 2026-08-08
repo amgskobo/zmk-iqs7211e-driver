@@ -48,7 +48,7 @@ static int iqs7211e_set_event_mode(struct iqs7211e_data *data);
 static bool iqs7211e_layer_allowed(const uint8_t *layers, uint8_t layer_count);
 static bool iqs7211e_scroll_trigger_layer_allowed(const struct iqs7211e_config *config);
 static bool iqs7211e_stationary_report_layer_allowed(const struct iqs7211e_config *config);
-static bool iqs7211e_stationary_report_allowed(const struct iqs7211e_data *data);
+static bool iqs7211e_stationary_chain_alive(const struct iqs7211e_data *data);
 static void iqs7211e_stationary_report_release_touch(struct iqs7211e_data *data);
 static uint8_t iqs7211e_get_bit(uint8_t byte, uint8_t pos);
 static uint8_t iqs7211e_get_num_fingers_from_info_flags(const uint8_t *info_flags);
@@ -98,6 +98,19 @@ static bool iqs7211e_init_state(struct iqs7211e_data *data)
         else if (!data->reset_called)
         {
             data->init_state = IQS7211E_INIT_CHIP_RESET;
+        }
+        else
+        {
+            /*
+             * A reset was issued and the part still does not report one. The
+             * write is only acted on once the communication window closes, so
+             * it can be missed. Arm the reset again rather than sitting here:
+             * CHIP_RESET is gated on this flag, so leaving it set means the
+             * state machine can never issue another one and never advances,
+             * and the driver polls INFO_FLAGS for the rest of the boot.
+             */
+            LOG_WRN("IQS7211E reset not observed - issuing it again");
+            data->reset_called = false;
         }
         break;
 
@@ -517,12 +530,22 @@ static bool iqs7211e_stationary_report_layer_allowed(const struct iqs7211e_confi
     return false;
 }
 
-static bool iqs7211e_stationary_report_allowed(const struct iqs7211e_data *data)
+/*
+ * Whether the resend chain should still be ticking.
+ *
+ * This deliberately leaves the layer test out. A gate that stops the chain
+ * rather than just the resend can never let it start again: a contact held
+ * still produces no events from the sensor, so once the timer stops there is
+ * nothing left to schedule the next one, and the contact is stranded until the
+ * finger moves or lifts. So the chain lives as long as the contact does, and
+ * the layer only decides whether a given tick puts anything on the wire.
+ */
+static bool iqs7211e_stationary_chain_alive(const struct iqs7211e_data *data)
 {
     const struct iqs7211e_config *config = data->dev->config;
 
     return config->report_abs && config->stationary_report_interval_ms > 0 &&
-           data->last_touched_state && iqs7211e_stationary_report_layer_allowed(config);
+           data->last_touched_state;
 }
 
 static uint8_t iqs7211e_get_num_fingers_from_info_flags(const uint8_t *info_flags)
@@ -969,8 +992,16 @@ static void iqs7211e_stationary_report_work_handler(struct k_work *work)
     struct iqs7211e_data *data = CONTAINER_OF(d_work, struct iqs7211e_data, stationary_report_work);
     const struct iqs7211e_config *config = data->dev->config;
 
-    if (atomic_get(&data->suspended) || !iqs7211e_stationary_report_allowed(data))
+    if (atomic_get(&data->suspended) || !iqs7211e_stationary_chain_alive(data))
     {
+        return;
+    }
+
+    if (!iqs7211e_stationary_report_layer_allowed(config))
+    {
+        /* Not this layer's business - skip the resend, keep the chain alive. */
+        k_work_reschedule(&data->stationary_report_work,
+                          K_MSEC(config->stationary_report_interval_ms));
         return;
     }
 
@@ -1003,7 +1034,7 @@ static void iqs7211e_stationary_report_work_handler(struct k_work *work)
     input_report_abs(data->dev, INPUT_ABS_X, data->finger_1_prev_x, false, K_FOREVER);
     input_report_abs(data->dev, INPUT_ABS_Y, data->finger_1_prev_y, true, K_FOREVER);
 
-    if (iqs7211e_stationary_report_allowed(data))
+    if (iqs7211e_stationary_chain_alive(data))
     {
         k_work_reschedule(&data->stationary_report_work, K_MSEC(config->stationary_report_interval_ms));
     }
@@ -1256,7 +1287,7 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
                 input_report_abs(data->dev, INPUT_ABS_Y, y, true, K_FOREVER);
             }
         }
-        else
+        else if (released_here)
         {
             /* Sync OFF state with final movement deltas for inertia */
             input_report_rel(data->dev, INPUT_REL_X, smooth_dx, false, K_FOREVER);
@@ -1277,10 +1308,17 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
         data->finger_1_prev_dy = 0;
     }
 
-    /* 5. Common History Update */
+    /*
+     * 5. Common History Update
+     *
+     * The velocity history only follows a real contact. On the no-fingers path
+     * dx and dy were loaded from this same history to carry the last velocity
+     * into the release report, so writing them back here would undo the clear
+     * the release just did and leave the pre-lift velocity standing for good.
+     */
     data->finger_1_prev_x = x;
     data->finger_1_prev_y = y;
-    if (!config->report_abs)
+    if (!config->report_abs && num_fingers > 0)
     {
         data->finger_1_prev_dx = dx;
         data->finger_1_prev_dy = dy;
@@ -1288,7 +1326,7 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
 
     if (config->stationary_report_interval_ms > 0)
     {
-        if (num_fingers > 0 && iqs7211e_stationary_report_allowed(data))
+        if (num_fingers > 0 && iqs7211e_stationary_chain_alive(data))
         {
             data->stationary_last_verify_uptime_ms = k_uptime_get_32();
             k_work_reschedule(&data->stationary_report_work, K_MSEC(config->stationary_report_interval_ms));
@@ -1467,12 +1505,25 @@ static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action ac
     case PM_DEVICE_ACTION_RESUME:
         if (data->sensor_suspended)
         {
+            /*
+             * Waking the sensor is best-effort, for the same reason suspending
+             * it is: the write can fail on a bus that is not back yet. Failing
+             * the resume over that is the worse outcome by far - the driver
+             * would keep the suspended flag set and the interrupt masked, and
+             * since both the callback and the work handler bail on that flag,
+             * nothing could ever run again. Carrying on at least leaves the
+             * driver side awake, and the flag stays set to record that the
+             * sensor may not be.
+             */
             ret = iqs7211e_set_suspend_state(data, false);
             if (ret < 0)
             {
-                return ret;
+                LOG_WRN("Sensor may still be asleep: bus unavailable at resume (%d)", ret);
             }
-            data->sensor_suspended = false;
+            else
+            {
+                data->sensor_suspended = false;
+            }
         }
 
         data->init_state = IQS7211E_INIT_VERIFY_PRODUCT;
