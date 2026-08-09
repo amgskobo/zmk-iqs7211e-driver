@@ -30,27 +30,6 @@ LOG_MODULE_REGISTER(iqs7211e, CONFIG_ZMK_LOG_LEVEL);
  */
 #define IQS7211E_POINTER_JITTER_DEADBAND 16
 
-static int16_t iqs7211e_apply_pointer_deadband(int16_t delta, int16_t *residual)
-{
-    int32_t accumulated = (int32_t)*residual + delta;
-
-    if (accumulated > IQS7211E_POINTER_JITTER_DEADBAND)
-    {
-        int32_t output = accumulated - IQS7211E_POINTER_JITTER_DEADBAND;
-        *residual = IQS7211E_POINTER_JITTER_DEADBAND;
-        return (int16_t)output;
-    }
-
-    if (accumulated < -IQS7211E_POINTER_JITTER_DEADBAND)
-    {
-        int32_t output = accumulated + IQS7211E_POINTER_JITTER_DEADBAND;
-        *residual = -IQS7211E_POINTER_JITTER_DEADBAND;
-        return (int16_t)output;
-    }
-
-    *residual = (int16_t)accumulated;
-    return 0;
-}
 
 static uint16_t iqs7211e_apply_coordinate_deadband(uint16_t sample, uint16_t *filtered)
 {
@@ -1207,12 +1186,10 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
     // Skip first frame setup for smoothing
     uint8_t skip_count = 1;
 
-    /* 2. Coordinate jitter gate and relative movement calculation */
+    /* 2. Shared coordinate filter, followed by mode-specific reporting */
     int16_t dx = 0, dy = 0, smooth_dx = 0, smooth_dy = 0;
     if (num_fingers > 0 && data->touch_count == 0)
     {
-        data->finger_1_jitter_residual_x = 0;
-        data->finger_1_jitter_residual_y = 0;
         data->finger_1_filtered_x = x;
         data->finger_1_filtered_y = y;
         data->finger_1_median_prev_1_x = x;
@@ -1222,27 +1199,11 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
     }
     else if (num_fingers > 0)
     {
-        if (config->report_abs)
-        {
-            uint16_t old_x = data->finger_1_filtered_x;
-            uint16_t old_y = data->finger_1_filtered_y;
-            dx = (int16_t)((int32_t)iqs7211e_apply_coordinate_deadband(
-                               x, &data->finger_1_filtered_x) - old_x);
-            dy = (int16_t)((int32_t)iqs7211e_apply_coordinate_deadband(
-                               y, &data->finger_1_filtered_y) - old_y);
-            data->finger_1_jitter_residual_x = (int16_t)(x - data->finger_1_filtered_x);
-            data->finger_1_jitter_residual_y = (int16_t)(y - data->finger_1_filtered_y);
-        }
-        else
-        {
-            dx = iqs7211e_apply_pointer_deadband((int16_t)(x - data->finger_1_prev_x),
-                                                  &data->finger_1_jitter_residual_x);
-            dy = iqs7211e_apply_pointer_deadband((int16_t)(y - data->finger_1_prev_y),
-                                                  &data->finger_1_jitter_residual_y);
-        }
+        iqs7211e_apply_coordinate_deadband(x, &data->finger_1_filtered_x);
+        iqs7211e_apply_coordinate_deadband(y, &data->finger_1_filtered_y);
     }
 
-    if (config->report_abs && num_fingers > 0)
+    if (num_fingers > 0)
     {
         uint16_t gated_x = data->finger_1_filtered_x;
         uint16_t gated_y = data->finger_1_filtered_y;
@@ -1255,14 +1216,23 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
         data->finger_1_median_prev_2_y = data->finger_1_median_prev_1_y;
         data->finger_1_median_prev_1_x = gated_x;
         data->finger_1_median_prev_1_y = gated_y;
+        data->finger_1_jitter_residual_x = (int16_t)(x - gated_x);
+        data->finger_1_jitter_residual_y = (int16_t)(y - gated_y);
 
-        LOG_DBG("Jitter: raw=(%d,%d) gated=(%d,%d) filtered=(%d,%d) delta=(%d,%d) residual=(%d,%d)",
-                x, y, gated_x, gated_y, median_x, median_y, dx, dy,
-                data->finger_1_jitter_residual_x, data->finger_1_jitter_residual_y);
+        LOG_DBG("Jitter: raw=(%d,%d) gated=(%d,%d) filtered=(%d,%d) residual=(%d,%d)", x, y,
+                gated_x, gated_y, median_x, median_y, data->finger_1_jitter_residual_x,
+                data->finger_1_jitter_residual_y);
         x = median_x;
         y = median_y;
+
+        if (data->touch_count > 0)
+        {
+            dx = (int16_t)((int32_t)x - data->finger_1_prev_x);
+            dy = (int16_t)((int32_t)y - data->finger_1_prev_y);
+        }
     }
-    else if (!config->report_abs)
+
+    if (!config->report_abs)
     {
         if (num_fingers == 0)
         {
@@ -1272,19 +1242,12 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
         }
 
         /*
-         * Use division, not an arithmetic shift. `>> 1` rounds towards
-         * negative infinity, so an odd sum loses half a count in the positive
-         * direction but gains half a count in the negative one. That leaves a
-         * constant negative offset of about 0.25 counts per report on every
-         * axis that is moving, which is large enough to cancel out - or even
-         * invert - slow movement. Division truncates towards zero, so both
-         * directions are attenuated equally.
+         * Match the Q10 absolute path's converter: difference the filtered
+         * coordinate, then average the current and previous raw deltas.
          */
         smooth_dx = (dx + data->finger_1_prev_dx) / 2;
         smooth_dy = (dy + data->finger_1_prev_dy) / 2;
-        LOG_DBG("Jitter: dx=%d dy=%d smooth=(%d,%d) residual=(%d,%d)", dx, dy, smooth_dx,
-                smooth_dy, data->finger_1_jitter_residual_x,
-                data->finger_1_jitter_residual_y);
+        LOG_DBG("Relative: delta=(%d,%d) smooth=(%d,%d)", dx, dy, smooth_dx, smooth_dy);
     }
 
     /* 3. Input Reporting and Synchronization */
