@@ -34,7 +34,7 @@ The driver also implements touch gesture and scroll slider features:
 | `report-abs` | boolean | false | If true, report absolute coordinates instead of relative ones. |
 | `stationary-report-interval-ms` | int | 0 | When `report-abs` is enabled, resend the last absolute coordinate report at this interval while touch remains active. Set to 0 to disable. |
 | `stationary-report-layers` | array | any | Layers on which stationary absolute resends are allowed. Any listed layer being active is enough, even with another layer above it. If omitted, resends are allowed on any layer. |
-| `stationary-touch-verify-interval-ms` | int | 120 | While stationary resends are active, read `INFO_FLAGS` at this interval to verify that touch is still present. Set to 0 to disable the fail-safe check. |
+| `stationary-touch-verify-interval-ms` | int | 120 | While stationary resends are active, run a full report read at this interval to verify that touch is still present. Set to 0 to disable the fail-safe check. |
 
 ### 2.1 Absolute Pointer Report Mode
 
@@ -52,7 +52,9 @@ In IQS7211E Event Mode, the sensor may stop generating new events while a finger
 
 A resend is allowed whenever any listed layer is active, whether or not another layer sits above it - deliberately not the highest-active-layer test `scroll-trigger-layers` uses. ZMK chooses a processor chain per event from the layer active at that moment, and by the first listener entry that matches rather than by the highest layer, so a listed layer can be the one holding the chain while a higher layer sits above it. Asking only about the top would withhold the resends that chain relies on and stop a stationary contact dead.
 
-`stationary-touch-verify-interval-ms` periodically checks `INFO_FLAGS` while stationary resends are running. If the read fails or the sensor reports no fingers, the driver releases touch and stops resending stale coordinates. The default is 120 ms; set it to 0 only if this fail-safe is not wanted.
+`stationary-touch-verify-interval-ms` periodically checks that the touch is still there while stationary resends are running. If the read fails or the sensor reports no fingers, the driver releases touch and stops resending stale coordinates. The default is 120 ms; set it to 0 only if this fail-safe is not wanted.
+
+The check is a full report read, not a bare `INFO_FLAGS` poll. A partial read followed by a STOP would close a communication window that had been opened for a gesture or coordinate event and lose it, so the verify goes through the normal report path with the interrupt masked. A verify tick can therefore also emit coordinates and dispatch clicks, exactly as an ordinary report does.
 
 Example:
 

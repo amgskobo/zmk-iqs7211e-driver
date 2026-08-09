@@ -58,7 +58,9 @@ properties:
       - 2
       - 3
     description: |
-      Set rotate angle for scroll slider area(CW)
+      Clockwise rotation applied to every reported coordinate, to match how the
+      module is physically mounted. The scroll slider edge follows it, so there
+      is no separate setting for that.
       0 = 0 deg, 1 = 90 deg, 2 = 180 deg, 3 = 270 deg
   report-abs:
     type: boolean
@@ -90,7 +92,7 @@ properties:
     type: int
     default: 120
     description: |
-      While stationary resends are active, read INFO_FLAGS at this interval to
+      While stationary resends are active, run a full report read at this interval to
       verify that a touch is still present. If the read fails or no fingers are
       present, stop stationary resends and report touch release. Set to 0 to
       disable this fail-safe check.

@@ -35,7 +35,7 @@
 | `report-abs` | boolean | false | true の場合、相対座標ではなく絶対座標を報告します。 |
 | `stationary-report-interval-ms` | int | 0 | `report-abs` 有効時、タッチが継続している間に最後の絶対座標レポートをこの周期で再送します。0 で無効です。 |
 | `stationary-report-layers` | array | any | stationary absolute resend を許可するレイヤー。上に別のレイヤーが乗っていても、列挙したいずれかが有効なら再送します。省略時はどのレイヤーでも再送します。 |
-| `stationary-touch-verify-interval-ms` | int | 120 | stationary resend 中、この周期で `INFO_FLAGS` を読み、タッチが残っているか確認します。0 で fail-safe 確認を無効化します。 |
+| `stationary-touch-verify-interval-ms` | int | 120 | stationary resend 中、この周期でレポートを1回読み、タッチが残っているか確認します。0 で fail-safe 確認を無効化します。 |
 
 ### 2.1 絶対座標レポートモード
 
@@ -53,7 +53,9 @@ IQS7211E の Event Mode では、指を止めたままにすると新しいイ�
 
 判定は「列挙したいずれかのレイヤーが有効か」で行い、上に別のレイヤーが乗っていても許可します。`scroll-trigger-layers` の highest active layer 判定とは意図的に異なります。ZMK はプロセッサチェーンをイベントごとに、その時点で有効なレイヤーから、かつリスナの**最初に一致した項目**で選びます（最上位レイヤーではありません）。そのため、列挙したレイヤーがチェーンを保持している最中に、より上のレイヤーが乗ることがあります。最上位だけを見ると、そのチェーンが頼っている再送を止めてしまい、静止した接触がそこで死にます。
 
-`stationary-touch-verify-interval-ms` は、stationary resend 中に `INFO_FLAGS` を定期的に確認します。読み取りに失敗した場合やセンサーが指なしを報告した場合、ドライバーはタッチを release して古い座標の再送を止めます。デフォルトは 120 ms です。この fail-safe が不要な場合のみ 0 にしてください。
+`stationary-touch-verify-interval-ms` は、stationary resend 中にタッチが残っているかを定期的に確認します。読み取りに失敗した場合やセンサーが指なしを報告した場合、ドライバーはタッチを release して古い座標の再送を止めます。デフォルトは 120 ms です。この fail-safe が不要な場合のみ 0 にしてください。
+
+この確認は `INFO_FLAGS` だけの読み取りではなく、通常のレポート経路を1回丸ごと通します。部分的に読んで STOP すると、ジェスチャーや座標イベントのために開いていた communication window を閉じてしまい、そのイベントを失うためです。したがって verify のタイミングでも座標の出力やクリックの発行が起こり得ます。
 
 例:
 
@@ -163,7 +165,7 @@ manifest:
         rotate-cw = <0>;
         // report-abs; // 絶対座標を使用する場合 (0-1024、最大値を含む)
         // stationary-report-interval-ms = <20>; // 任意: 静止中の ABS レポートを再送する
-        // stationary-report-layers = <1>; // 任意: 指定した highest active layer の時だけ再送する
+        // stationary-report-layers = <1>; // 任意: 列挙したいずれかのレイヤーが有効な間だけ再送する
         // stationary-touch-verify-interval-ms = <120>; // 任意: 再送中にタッチ継続を確認する
     };
 };
