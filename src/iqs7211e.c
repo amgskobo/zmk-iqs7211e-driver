@@ -344,9 +344,9 @@ static bool iqs7211e_read_ati_active(struct iqs7211e_data *data)
 static int iqs7211e_queue_value_updates(struct iqs7211e_data *data)
 {
     const struct iqs7211e_config *config = data->dev->config;
-    uint8_t buf[8];
+    uint8_t buf[12];
     int ret;
-    ret = iqs7211e_read_bytes(&config->i2c, IQS7211E_MM_GESTURES, buf, 8);
+    ret = iqs7211e_read_bytes(&config->i2c, IQS7211E_MM_GESTURES, buf, sizeof(buf));
     if (ret < 0)
     {
         LOG_ERR("Failed to read GESTURES and FINGER_1 data");
@@ -361,6 +361,8 @@ static int iqs7211e_queue_value_updates(struct iqs7211e_data *data)
 
     data->finger_1_x = (buf[5] << 8) | buf[4];
     data->finger_1_y = (buf[7] << 8) | buf[6];
+    data->finger_1_touch_strength = (buf[9] << 8) | buf[8];
+    data->finger_1_area = (buf[11] << 8) | buf[10];
 
     /*
      * Finger 2 is physically not supported on this 22x22mm module.
@@ -914,10 +916,16 @@ static void iqs7211e_work_handler(struct k_work *work)
     {
         return;
     }
+    data->diagnostic_work_count++;
 
     if (iqs7211e_init_state(data))
     {
         int ret = iqs7211e_report_data(data);
+        data->diagnostic_last_report_ret = ret;
+        if (ret >= 0)
+        {
+            data->diagnostic_report_count++;
+        }
         if (ret < 0 && data->stationary_verify_pending)
         {
             LOG_WRN("Stationary touch verify failed; releasing touch");
@@ -925,6 +933,23 @@ static void iqs7211e_work_handler(struct k_work *work)
         }
     }
     data->stationary_verify_pending = false;
+    const struct iqs7211e_config *config = data->dev->config;
+    int rdy_raw = gpio_pin_get_raw(config->irq_gpio.port, config->irq_gpio.pin);
+    if (rdy_raw == 0)
+    {
+        data->diagnostic_rdy_low_count++;
+    }
+    LOG_DBG("FLOW irq=%u work=%u report=%u rdy_low=%u rdy_raw=%d report_ret=%d",
+            data->diagnostic_irq_count,
+            data->diagnostic_work_count,
+            data->diagnostic_report_count,
+            data->diagnostic_rdy_low_count,
+            rdy_raw,
+            data->diagnostic_last_report_ret);
+    if (rdy_raw < 0)
+    {
+        LOG_WRN("Failed to sample IQS7211E RDY level: %d", rdy_raw);
+    }
 
     if (!atomic_get(&data->suspended) && set_gpio_interrupt(data->dev, true) < 0)
     {
@@ -1109,6 +1134,8 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
 
     LOG_DBG("Fingers: %d, Gesture: %d, Mode: %s", num_fingers, gesture_event, config->report_abs ? "Abs" : "Rel");
     /* Finger 2 reporting is disabled for this hardware profile */
+    LOG_DBG("Signal: strength=%u area=%u info=%02X%02X", data->finger_1_touch_strength,
+            data->finger_1_area, data->info_flags[1], data->info_flags[0]);
     LOG_DBG("Raw: F1(X=%d, Y=%d) | Norm: X=%d, Y=%d",
             data->finger_1_x, data->finger_1_y, x, y);
 
@@ -1356,6 +1383,7 @@ static int set_gpio_interrupt(const struct device *dev, const bool en)
 static void iqs7211e_gpio_callback(const struct device *port, struct gpio_callback *cb, gpio_port_pins_t pins)
 {
     struct iqs7211e_data *data = CONTAINER_OF(cb, struct iqs7211e_data, gpio_cb);
+    data->diagnostic_irq_count++;
     if (atomic_get(&data->suspended))
     {
         return;
@@ -1409,6 +1437,11 @@ static int iqs7211e_init(const struct device *dev)
     data->last_touched_state = false;
     data->stationary_verify_pending = false;
     data->stationary_last_verify_uptime_ms = 0;
+    data->diagnostic_irq_count = 0;
+    data->diagnostic_work_count = 0;
+    data->diagnostic_report_count = 0;
+    data->diagnostic_rdy_low_count = 0;
+    data->diagnostic_last_report_ret = 0;
     data->dev = dev;
     atomic_clear(&data->suspended);
     data->sensor_suspended = false;

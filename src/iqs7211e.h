@@ -158,6 +158,8 @@ struct iqs7211e_data
     uint16_t click_button;
     uint16_t finger_1_x;
     uint16_t finger_1_y;
+    uint16_t finger_1_touch_strength;
+    uint16_t finger_1_area;
     uint16_t finger_2_x;
     uint16_t finger_2_y;
     uint16_t finger_1_prev_x;
@@ -167,6 +169,11 @@ struct iqs7211e_data
     bool last_touched_state;
     bool stationary_verify_pending;
     uint32_t stationary_last_verify_uptime_ms;
+    uint32_t diagnostic_irq_count;
+    uint32_t diagnostic_work_count;
+    uint32_t diagnostic_report_count;
+    uint32_t diagnostic_rdy_low_count;
+    int diagnostic_last_report_ret;
     struct k_work_delayable stationary_report_work;
     struct k_work_sync stationary_report_work_sync;
     struct k_work_sync work_sync;
