@@ -22,6 +22,69 @@ LOG_MODULE_REGISTER(iqs7211e, CONFIG_ZMK_LOG_LEVEL);
 /* Spacing between the press and release edges of a generated click. */
 #define IQS7211E_CLICK_EDGE_MS 20
 
+/*
+ * IQS7211E lacks the dedicated coordinate jitter gate available on IQS9151.
+ * Keep a small rubber-band residual on each relative axis: motion inside the
+ * band is held, while motion beyond it is emitted without discarding slow,
+ * intentional movement.
+ */
+#define IQS7211E_POINTER_JITTER_DEADBAND 16
+
+static int16_t iqs7211e_apply_pointer_deadband(int16_t delta, int16_t *residual)
+{
+    int32_t accumulated = (int32_t)*residual + delta;
+
+    if (accumulated > IQS7211E_POINTER_JITTER_DEADBAND)
+    {
+        int32_t output = accumulated - IQS7211E_POINTER_JITTER_DEADBAND;
+        *residual = IQS7211E_POINTER_JITTER_DEADBAND;
+        return (int16_t)output;
+    }
+
+    if (accumulated < -IQS7211E_POINTER_JITTER_DEADBAND)
+    {
+        int32_t output = accumulated + IQS7211E_POINTER_JITTER_DEADBAND;
+        *residual = -IQS7211E_POINTER_JITTER_DEADBAND;
+        return (int16_t)output;
+    }
+
+    *residual = (int16_t)accumulated;
+    return 0;
+}
+
+static uint16_t iqs7211e_apply_coordinate_deadband(uint16_t sample, uint16_t *filtered)
+{
+    int32_t delta = (int32_t)sample - *filtered;
+
+    if (delta > IQS7211E_POINTER_JITTER_DEADBAND)
+    {
+        *filtered = sample - IQS7211E_POINTER_JITTER_DEADBAND;
+    }
+    else if (delta < -IQS7211E_POINTER_JITTER_DEADBAND)
+    {
+        *filtered = sample + IQS7211E_POINTER_JITTER_DEADBAND;
+    }
+
+    return *filtered;
+}
+
+static uint16_t iqs7211e_median3(uint16_t a, uint16_t b, uint16_t c)
+{
+    if (a > b)
+    {
+        uint16_t tmp = a;
+        a = b;
+        b = tmp;
+    }
+    if (b > c)
+    {
+        b = c;
+    }
+
+    return (a > b) ? a : b;
+}
+
+
 static enum iqs7211e_gestures_event iqs7211e_get_touchpad_event(const struct iqs7211e_data *data);
 static bool iqs7211e_init_state(struct iqs7211e_data *data);
 static int iqs7211e_get_product_num(struct iqs7211e_data *data);
@@ -601,6 +664,8 @@ static void iqs7211e_stationary_report_release_touch(struct iqs7211e_data *data)
     data->touch_count = 0;
     data->finger_1_prev_dx = 0;
     data->finger_1_prev_dy = 0;
+    data->finger_1_jitter_residual_x = 0;
+    data->finger_1_jitter_residual_y = 0;
 }
 
 static int iqs7211e_write_defaults(struct iqs7211e_data *data)
@@ -1142,16 +1207,64 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
     // Skip first frame setup for smoothing
     uint8_t skip_count = 1;
 
-    /* 2. Movement Calculation (Only for relative mode) */
+    /* 2. Coordinate jitter gate and relative movement calculation */
     int16_t dx = 0, dy = 0, smooth_dx = 0, smooth_dy = 0;
-    if (!config->report_abs)
+    if (num_fingers > 0 && data->touch_count == 0)
     {
-        if (num_fingers > 0)
+        data->finger_1_jitter_residual_x = 0;
+        data->finger_1_jitter_residual_y = 0;
+        data->finger_1_filtered_x = x;
+        data->finger_1_filtered_y = y;
+        data->finger_1_median_prev_1_x = x;
+        data->finger_1_median_prev_1_y = y;
+        data->finger_1_median_prev_2_x = x;
+        data->finger_1_median_prev_2_y = y;
+    }
+    else if (num_fingers > 0)
+    {
+        if (config->report_abs)
         {
-            dx = (data->touch_count == 0) ? 0 : (x - data->finger_1_prev_x);
-            dy = (data->touch_count == 0) ? 0 : (y - data->finger_1_prev_y);
+            uint16_t old_x = data->finger_1_filtered_x;
+            uint16_t old_y = data->finger_1_filtered_y;
+            dx = (int16_t)((int32_t)iqs7211e_apply_coordinate_deadband(
+                               x, &data->finger_1_filtered_x) - old_x);
+            dy = (int16_t)((int32_t)iqs7211e_apply_coordinate_deadband(
+                               y, &data->finger_1_filtered_y) - old_y);
+            data->finger_1_jitter_residual_x = (int16_t)(x - data->finger_1_filtered_x);
+            data->finger_1_jitter_residual_y = (int16_t)(y - data->finger_1_filtered_y);
         }
         else
+        {
+            dx = iqs7211e_apply_pointer_deadband((int16_t)(x - data->finger_1_prev_x),
+                                                  &data->finger_1_jitter_residual_x);
+            dy = iqs7211e_apply_pointer_deadband((int16_t)(y - data->finger_1_prev_y),
+                                                  &data->finger_1_jitter_residual_y);
+        }
+    }
+
+    if (config->report_abs && num_fingers > 0)
+    {
+        uint16_t gated_x = data->finger_1_filtered_x;
+        uint16_t gated_y = data->finger_1_filtered_y;
+        uint16_t median_x = iqs7211e_median3(gated_x, data->finger_1_median_prev_1_x,
+                                              data->finger_1_median_prev_2_x);
+        uint16_t median_y = iqs7211e_median3(gated_y, data->finger_1_median_prev_1_y,
+                                              data->finger_1_median_prev_2_y);
+
+        data->finger_1_median_prev_2_x = data->finger_1_median_prev_1_x;
+        data->finger_1_median_prev_2_y = data->finger_1_median_prev_1_y;
+        data->finger_1_median_prev_1_x = gated_x;
+        data->finger_1_median_prev_1_y = gated_y;
+
+        LOG_DBG("Jitter: raw=(%d,%d) gated=(%d,%d) filtered=(%d,%d) delta=(%d,%d) residual=(%d,%d)",
+                x, y, gated_x, gated_y, median_x, median_y, dx, dy,
+                data->finger_1_jitter_residual_x, data->finger_1_jitter_residual_y);
+        x = median_x;
+        y = median_y;
+    }
+    else if (!config->report_abs)
+    {
+        if (num_fingers == 0)
         {
             /* On release, maintain last velocity for inertia initialization */
             dx = data->finger_1_prev_dx;
@@ -1169,6 +1282,9 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
          */
         smooth_dx = (dx + data->finger_1_prev_dx) / 2;
         smooth_dy = (dy + data->finger_1_prev_dy) / 2;
+        LOG_DBG("Jitter: dx=%d dy=%d smooth=(%d,%d) residual=(%d,%d)", dx, dy, smooth_dx,
+                smooth_dy, data->finger_1_jitter_residual_x,
+                data->finger_1_jitter_residual_y);
     }
 
     /* 3. Input Reporting and Synchronization */
@@ -1333,6 +1449,8 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
         data->touch_count = 0;
         data->finger_1_prev_dx = 0;
         data->finger_1_prev_dy = 0;
+        data->finger_1_jitter_residual_x = 0;
+        data->finger_1_jitter_residual_y = 0;
     }
 
     /*
@@ -1433,6 +1551,8 @@ static int iqs7211e_init(const struct device *dev)
     }
     data->init_state = IQS7211E_INIT_VERIFY_PRODUCT;
     data->touch_count = 0;
+    data->finger_1_jitter_residual_x = 0;
+    data->finger_1_jitter_residual_y = 0;
     data->is_scroll_layer_active = false;
     data->last_touched_state = false;
     data->stationary_verify_pending = false;
@@ -1562,6 +1682,8 @@ static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action ac
         data->init_state = IQS7211E_INIT_VERIFY_PRODUCT;
         data->reset_called = false;
         data->touch_count = 0;
+        data->finger_1_jitter_residual_x = 0;
+        data->finger_1_jitter_residual_y = 0;
         data->is_scroll_layer_active = false;
         data->last_touched_state = false;
         data->stationary_verify_pending = false;

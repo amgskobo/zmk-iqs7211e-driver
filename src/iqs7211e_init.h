@@ -97,10 +97,11 @@
  * detected. What separates the two is what happens next: sustained contact
  * stays well clear of the level a hover settles at. Raising CLEAR into that gap
  * lets a false detection release on its own rather than latching, which the
- * stock value - far below SET - could not do. SET is one step above the value
- * in Azoteq's example configuration to reduce release-time hover re-detection.
+ * stock value - far below SET - could not do. SET stays at Azoteq's example
+ * value: hardware testing showed that raising it by one step increased contact
+ * fragmentation during taps.
  */
-#define TRACKPAD_TOUCH_SET_THRESHOLD             0x21
+#define TRACKPAD_TOUCH_SET_THRESHOLD             0x20
 #define TRACKPAD_TOUCH_CLEAR_THRESHOLD           0x10
 #define ALP_THRESHOLD_0                          0x08
 #define ALP_THRESHOLD_1                          0x00

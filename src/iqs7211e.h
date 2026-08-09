@@ -166,6 +166,14 @@ struct iqs7211e_data
     uint16_t finger_1_prev_y;
     int16_t finger_1_prev_dx;
     int16_t finger_1_prev_dy;
+    int16_t finger_1_jitter_residual_x;
+    int16_t finger_1_jitter_residual_y;
+    uint16_t finger_1_filtered_x;
+    uint16_t finger_1_filtered_y;
+    uint16_t finger_1_median_prev_1_x;
+    uint16_t finger_1_median_prev_1_y;
+    uint16_t finger_1_median_prev_2_x;
+    uint16_t finger_1_median_prev_2_y;
     bool last_touched_state;
     bool stationary_verify_pending;
     uint32_t stationary_last_verify_uptime_ms;
