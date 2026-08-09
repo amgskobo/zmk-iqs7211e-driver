@@ -1555,6 +1555,19 @@ static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action ac
                      DT_INST_PROP(inst, stationary_report_layers);),                               \
                 ())
 
+/*
+ * The coordinate range is written twice: once as the value programmed into the
+ * sensor (iqs7211e_init.h, as a register byte pair) and once as the number this
+ * file rotates and thresholds against. The README invites editing the init
+ * header, so tie them together - changing the resolution there and not here
+ * would silently mirror every rotation, skew the release coordinate and move
+ * the scroll edge, with nothing to say so.
+ */
+BUILD_ASSERT(RESOLUTION_X == ((X_RESOLUTION_1 << 8) | X_RESOLUTION_0),
+             "RESOLUTION_X must match X_RESOLUTION_0/1 in iqs7211e_init.h");
+BUILD_ASSERT(RESOLUTION_Y == ((Y_RESOLUTION_1 << 8) | Y_RESOLUTION_0),
+             "RESOLUTION_Y must match Y_RESOLUTION_0/1 in iqs7211e_init.h");
+
 #define IQS7211E_VALIDATE(inst)                                                                 \
     BUILD_ASSERT(DT_INST_PROP_OR(inst, single_tap, -1) >= -1 &&                                 \
                      DT_INST_PROP_OR(inst, single_tap, -1) <= INT8_MAX,                          \
