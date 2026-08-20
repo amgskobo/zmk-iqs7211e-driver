@@ -8,3 +8,35 @@ menuconfig IQS7211E
   select GPIO
   help
     Enable driver for IQS7211E.
+
+if IQS7211E
+
+config IQS7211E_WORKQUEUE_STACK_SIZE
+  int "IQS7211E work queue stack size"
+  default 1536
+  range 1024 4096
+  help
+    Stack size in bytes for the driver-owned work queue. The queue serializes
+    sensor reads, input reports, generated clicks, stationary reports, touch
+    verification, and suspend-time releases.
+
+config IQS7211E_WORKQUEUE_PRIORITY
+  int "IQS7211E work queue priority"
+  default -1
+  range -16 15
+  help
+    Cooperative priority used by the driver-owned work queue. The default
+    keeps RDY servicing prompt. If the input message queue fills, blocking
+    input reports let the input thread run and drain it without dropping an
+    event.
+
+config IQS7211E_WORKQUEUE_STACK_USAGE
+  bool "Log IQS7211E work queue stack high-water mark"
+  select INIT_STACKS
+  select THREAD_STACK_INFO
+  help
+    Log the work queue's peak stack usage when a new high-water mark is
+    observed. Enable this only in a diagnostic firmware while sizing
+    IQS7211E_WORKQUEUE_STACK_SIZE.
+
+endif

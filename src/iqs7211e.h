@@ -148,11 +148,10 @@ struct iqs7211e_data
     uint8_t touch_count;
     /*
      * Tap gestures are emitted as press/release pairs from a delayed work item
-     * rather than inline, because the report handler runs on the system
-     * workqueue and sleeping there stalls every other user of that queue.
-     * click_edges is the number of edges still to emit - two per click, so a
-     * triple tap starts at six - and click_button is the INPUT_BTN_* code.
-     * INPUT_BTN_0 is 0x100, so the button code needs 16 bits.
+     * rather than sleeping inline on the driver queue. click_edges is the
+     * number of edges still to emit - two per click, so a triple tap starts at
+     * six - and click_button is the INPUT_BTN_* code. INPUT_BTN_0 is 0x100, so
+     * the button code needs 16 bits.
      */
     struct k_work_delayable click_work;
     struct k_work_sync click_work_sync;
@@ -181,5 +180,10 @@ struct iqs7211e_data
     struct k_work_sync stationary_report_work_sync;
     struct k_work_delayable touch_verify_work;
     struct k_work_sync touch_verify_work_sync;
+#ifdef CONFIG_PM_DEVICE
+    struct k_work pm_release_work;
+    struct k_work_sync pm_release_work_sync;
+    int pm_release_ret;
+#endif
     struct k_work_sync work_sync;
 };
