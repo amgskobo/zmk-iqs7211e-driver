@@ -220,6 +220,8 @@ CONFIG_IQS7211E=y
 
 ドライバーは、すべての IQS7211E instance で1つの専用 work queue を共有します。センサー報告、クリックの press/release、静止中の再送、touch verify、suspend 時の release はすべてこの queue 上で順番に処理します。Zephyr の非同期 input backend は system work queue からの報告を non-blocking に変更するため、input queue が満杯になると release を落とす可能性があります。専用 queue では `K_FOREVER` の待機が有効なままになり、input thread が queue を空けるまで待つため、press/release の順序を保持できます。
 
+RDY 割り込みを再有効化した後は、少し遅らせて logical level も確認します。割り込みを mask している間に RDY が active になっていた場合は、次の edge を待たずに report work を再投入します。高速な復旧回数には上限を設け、その後は間隔を広げるため、RDY pin が異常に active のままでも work queue を占有し続けません。
+
 通常は次の production 既定値のままで使用します。
 
 ```kconfig

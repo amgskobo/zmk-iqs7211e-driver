@@ -233,6 +233,11 @@ suspend-time releases all run there. This is required for reliable input
 delivery: Zephyr's asynchronous input backend may make reports from the system
 work queue non-blocking, so a full input queue could otherwise drop a release.
 
+After re-enabling the RDY interrupt, the driver also performs a delayed logical
+level check. If RDY became active while its edge interrupt was masked, the
+report work is queued again without waiting for another edge. Fast recovery is
+bounded and then backed off, so a stuck RDY pin cannot spin the work queue.
+
 The production defaults are normally sufficient:
 
 ```kconfig

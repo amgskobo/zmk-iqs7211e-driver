@@ -175,11 +175,15 @@ struct iqs7211e_data
     uint32_t diagnostic_work_count;
     uint32_t diagnostic_report_count;
     uint32_t diagnostic_rdy_low_count;
+    uint32_t diagnostic_rdy_recovery_count;
     int diagnostic_last_report_ret;
     struct k_work_delayable stationary_report_work;
     struct k_work_sync stationary_report_work_sync;
     struct k_work_delayable touch_verify_work;
     struct k_work_sync touch_verify_work_sync;
+    struct k_work_delayable rdy_recheck_work;
+    struct k_work_sync rdy_recheck_work_sync;
+    atomic_t rdy_recheck_attempts;
 #ifdef CONFIG_PM_DEVICE
     struct k_work pm_release_work;
     struct k_work_sync pm_release_work_sync;

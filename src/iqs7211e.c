@@ -23,6 +23,15 @@ LOG_MODULE_REGISTER(iqs7211e, CONFIG_ZMK_LOG_LEVEL);
 #define IQS7211E_CLICK_EDGE_MS 20
 
 /*
+ * RDY is still physically low immediately after many report reads. Give it
+ * time to deassert before checking whether an edge was missed while the IRQ
+ * was masked. Bound fast retries so a stuck RDY pin cannot spin the queue.
+ */
+#define IQS7211E_RDY_RECHECK_MS 1
+#define IQS7211E_RDY_FAST_RECHECK_LIMIT 4
+#define IQS7211E_RDY_RECHECK_BACKOFF_MS 20
+
+/*
  * Zephyr's asynchronous input backend changes K_FOREVER to K_NO_WAIT when an
  * input report originates on the system work queue. A full input message
  * queue can therefore drop a release event. Keep every driver-owned producer
@@ -52,6 +61,7 @@ static void iqs7211e_work_handler(struct k_work *work);
 static void iqs7211e_stationary_report_work_handler(struct k_work *work);
 static void iqs7211e_touch_verify_work_handler(struct k_work *work);
 static void iqs7211e_click_work_handler(struct k_work *work);
+static void iqs7211e_rdy_recheck_work_handler(struct k_work *work);
 #ifdef CONFIG_PM_DEVICE
 static void iqs7211e_pm_release_work_handler(struct k_work *work);
 #endif
@@ -123,6 +133,36 @@ static int iqs7211e_reschedule_work(struct k_work_delayable *work,
         LOG_ERR("Failed to reschedule driver work: %d", ret);
     }
     return ret;
+}
+
+static k_timeout_t iqs7211e_rdy_recheck_delay(const struct iqs7211e_data *data)
+{
+    return atomic_get(&data->rdy_recheck_attempts) >=
+                   IQS7211E_RDY_FAST_RECHECK_LIMIT
+               ? K_MSEC(IQS7211E_RDY_RECHECK_BACKOFF_MS)
+               : K_MSEC(IQS7211E_RDY_RECHECK_MS);
+}
+
+static void iqs7211e_schedule_rdy_recheck(struct iqs7211e_data *data)
+{
+    if (!atomic_get(&data->suspended))
+    {
+        iqs7211e_reschedule_work(&data->rdy_recheck_work,
+                                 iqs7211e_rdy_recheck_delay(data));
+    }
+}
+
+static int iqs7211e_enable_interrupt_and_recheck(struct iqs7211e_data *data)
+{
+    int ret = set_gpio_interrupt(data->dev, true);
+
+    if (ret < 0)
+    {
+        return ret;
+    }
+
+    iqs7211e_schedule_rdy_recheck(data);
+    return 0;
 }
 
 static void iqs7211e_note_work_queue_stack_usage(void)
@@ -1065,20 +1105,82 @@ static void iqs7211e_work_handler(struct k_work *work)
     {
         data->diagnostic_rdy_low_count++;
     }
-    LOG_DBG("FLOW irq=%u work=%u report=%u rdy_low=%u rdy_raw=%d report_ret=%d",
+    LOG_DBG("FLOW irq=%u work=%u report=%u rdy_low=%u recover=%u rdy_raw=%d report_ret=%d",
             data->diagnostic_irq_count, data->diagnostic_work_count,
-            data->diagnostic_report_count, data->diagnostic_rdy_low_count, rdy_raw,
+            data->diagnostic_report_count, data->diagnostic_rdy_low_count,
+            data->diagnostic_rdy_recovery_count, rdy_raw,
             data->diagnostic_last_report_ret);
     if (rdy_raw < 0)
     {
         LOG_WRN("Failed to sample IQS7211E RDY level: %d", rdy_raw);
     }
 
-    if (!atomic_get(&data->suspended) && set_gpio_interrupt(data->dev, true) < 0)
+    if (!atomic_get(&data->suspended) &&
+        iqs7211e_enable_interrupt_and_recheck(data) < 0)
     {
         LOG_ERR("Failed to re-enable IQS7211E interrupt");
     }
 
+    iqs7211e_note_work_queue_stack_usage();
+}
+
+static void iqs7211e_rdy_recheck_work_handler(struct k_work *work)
+{
+    struct k_work_delayable *d_work = k_work_delayable_from_work(work);
+    struct iqs7211e_data *data =
+        CONTAINER_OF(d_work, struct iqs7211e_data, rdy_recheck_work);
+    const struct iqs7211e_config *config = data->dev->config;
+
+    if (atomic_get(&data->suspended))
+    {
+        return;
+    }
+
+    int rdy_active = gpio_pin_get_dt(&config->irq_gpio);
+    if (rdy_active < 0)
+    {
+        LOG_WRN("Failed to recheck IQS7211E RDY level: %d", rdy_active);
+        return;
+    }
+    if (rdy_active == 0)
+    {
+        atomic_clear(&data->rdy_recheck_attempts);
+        iqs7211e_note_work_queue_stack_usage();
+        return;
+    }
+
+    atomic_val_t attempts = atomic_get(&data->rdy_recheck_attempts);
+    if (attempts < IQS7211E_RDY_FAST_RECHECK_LIMIT)
+    {
+        attempts = atomic_inc(&data->rdy_recheck_attempts) + 1;
+        if (attempts == IQS7211E_RDY_FAST_RECHECK_LIMIT)
+        {
+            LOG_WRN("RDY stayed active across %d fast recoveries; backing off",
+                    IQS7211E_RDY_FAST_RECHECK_LIMIT);
+        }
+    }
+
+    if (set_gpio_interrupt(data->dev, false) < 0)
+    {
+        iqs7211e_note_work_queue_stack_usage();
+        return;
+    }
+
+    int ret = iqs7211e_submit_work(&data->work);
+    if (ret < 0)
+    {
+        if (!atomic_get(&data->suspended) &&
+            iqs7211e_enable_interrupt_and_recheck(data) < 0)
+        {
+            LOG_ERR("Failed to restore IRQ after RDY recovery failure");
+        }
+        iqs7211e_note_work_queue_stack_usage();
+        return;
+    }
+
+    data->diagnostic_rdy_recovery_count++;
+    LOG_DBG("RDY recovery queued: attempt=%d total=%u", (int)attempts,
+            data->diagnostic_rdy_recovery_count);
     iqs7211e_note_work_queue_stack_usage();
 }
 
@@ -1232,12 +1334,14 @@ static void iqs7211e_touch_verify_work_handler(struct k_work *work)
      * its layer gate. It verifies the physical touch, not a processor route.
      */
     data->touch_verify_pending = true;
+    atomic_clear(&data->rdy_recheck_attempts);
     if (set_gpio_interrupt(data->dev, false) < 0 ||
         iqs7211e_submit_work(&data->work) < 0)
     {
         data->touch_verify_pending = false;
         iqs7211e_release_touch(data);
-        if (!atomic_get(&data->suspended) && set_gpio_interrupt(data->dev, true) < 0)
+        if (!atomic_get(&data->suspended) &&
+            iqs7211e_enable_interrupt_and_recheck(data) < 0)
         {
             LOG_ERR("Failed to restore IQS7211E interrupt after verify failure");
         }
@@ -1615,7 +1719,7 @@ static int set_gpio_interrupt(const struct device *dev, const bool en)
 {
     const struct iqs7211e_config *config = dev->config;
     int ret = gpio_pin_interrupt_configure_dt(&config->irq_gpio,
-                                              en ? GPIO_INT_EDGE_FALLING : GPIO_INT_DISABLE);
+                                              en ? GPIO_INT_EDGE_TO_ACTIVE : GPIO_INT_DISABLE);
     if (ret < 0)
     {
         LOG_ERR("Failed to set interrupt");
@@ -1633,13 +1737,16 @@ static void iqs7211e_gpio_callback(const struct device *port, struct gpio_callba
         return;
     }
 
+    atomic_clear(&data->rdy_recheck_attempts);
+
     if (set_gpio_interrupt(data->dev, false) < 0 ||
         iqs7211e_submit_work(&data->work) < 0)
     {
         LOG_ERR("Failed to queue IQS7211E interrupt work");
-        if (!atomic_get(&data->suspended))
+        if (!atomic_get(&data->suspended) &&
+            iqs7211e_enable_interrupt_and_recheck(data) < 0)
         {
-            set_gpio_interrupt(data->dev, true);
+            LOG_ERR("Failed to restore IRQ after interrupt work failure");
         }
     }
 }
@@ -1685,9 +1792,11 @@ static int iqs7211e_init(const struct device *dev)
     data->diagnostic_work_count = 0;
     data->diagnostic_report_count = 0;
     data->diagnostic_rdy_low_count = 0;
+    data->diagnostic_rdy_recovery_count = 0;
     data->diagnostic_last_report_ret = 0;
     data->dev = dev;
     atomic_clear(&data->suspended);
+    atomic_clear(&data->rdy_recheck_attempts);
     data->sensor_suspended = false;
 
     iqs7211e_start_work_queue();
@@ -1695,12 +1804,13 @@ static int iqs7211e_init(const struct device *dev)
     k_work_init_delayable(&data->stationary_report_work, iqs7211e_stationary_report_work_handler);
     k_work_init_delayable(&data->touch_verify_work, iqs7211e_touch_verify_work_handler);
     k_work_init_delayable(&data->click_work, iqs7211e_click_work_handler);
+    k_work_init_delayable(&data->rdy_recheck_work, iqs7211e_rdy_recheck_work_handler);
 #ifdef CONFIG_PM_DEVICE
     k_work_init(&data->pm_release_work, iqs7211e_pm_release_work_handler);
     data->pm_release_ret = 0;
 #endif
     data->click_edges = 0;
-    ret = set_gpio_interrupt(data->dev, true);
+    ret = iqs7211e_enable_interrupt_and_recheck(data);
     if (ret < 0)
     {
         return ret;
@@ -1739,6 +1849,7 @@ static void iqs7211e_restore_after_failed_suspend(struct iqs7211e_data *data)
 
     data->touch_verify_pending = false;
     atomic_clear(&data->suspended);
+    atomic_clear(&data->rdy_recheck_attempts);
 
     if (data->click_edges > 0)
     {
@@ -1757,7 +1868,7 @@ static void iqs7211e_restore_after_failed_suspend(struct iqs7211e_data *data)
             K_MSEC(config->touch_verify_interval_ms));
     }
 
-    if (set_gpio_interrupt(data->dev, true) < 0)
+    if (iqs7211e_enable_interrupt_and_recheck(data) < 0)
     {
         LOG_ERR("Failed to restore IRQ after rejected suspend");
     }
@@ -1801,6 +1912,8 @@ static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action ac
 
         k_work_cancel_delayable_sync(&data->touch_verify_work,
                                      &data->touch_verify_work_sync);
+        k_work_cancel_delayable_sync(&data->rdy_recheck_work,
+                                     &data->rdy_recheck_work_sync);
         k_work_cancel_sync(&data->work, &data->work_sync);
         /* A running handler may have re-enabled the IRQ before it completed. */
         ret = set_gpio_interrupt(dev, false);
@@ -1884,8 +1997,9 @@ static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action ac
         data->touch_verify_pending = false;
         data->click_edges = 0;
         atomic_clear(&data->suspended);
+        atomic_clear(&data->rdy_recheck_attempts);
         LOG_DBG("IQS7211E device resumed ");
-        return set_gpio_interrupt(dev, true);
+        return iqs7211e_enable_interrupt_and_recheck(data);
     default:
         return -ENOTSUP;
     }
