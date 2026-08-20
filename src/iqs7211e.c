@@ -16,6 +16,7 @@
 #include <zephyr/pm/device.h>
 #include "iqs7211e_init.h"
 #include "iqs7211e.h"
+#include "iqs7211e_runtime.h"
 
 LOG_MODULE_REGISTER(iqs7211e, CONFIG_ZMK_LOG_LEVEL);
 
@@ -88,6 +89,7 @@ static bool iqs7211e_stationary_report_layer_allowed(const struct iqs7211e_confi
 static bool iqs7211e_stationary_chain_alive(const struct iqs7211e_data *data);
 static bool iqs7211e_touch_verify_chain_alive(const struct iqs7211e_data *data);
 static int iqs7211e_release_touch(struct iqs7211e_data *data);
+static int iqs7211e_begin_runtime_reinitialization(struct iqs7211e_data *data);
 static uint8_t iqs7211e_get_bit(uint8_t byte, uint8_t pos);
 static uint8_t iqs7211e_get_num_fingers_from_info_flags(const uint8_t *info_flags);
 static uint8_t iqs7211e_get_num_fingers(const struct iqs7211e_data *data);
@@ -352,7 +354,7 @@ static int iqs7211e_check_reset(struct iqs7211e_data *data)
         return ret;
     }
     LOG_DBG("Info Flags: %02X %02X", info_flags[0], info_flags[1]);
-    return (info_flags[0] & (1 << IQS7211E_SHOW_RESET_BIT)) != 0;
+    return iqs7211e_runtime_show_reset(info_flags[0]);
 }
 
 static int iqs7211e_sw_reset(struct iqs7211e_data *data)
@@ -768,16 +770,16 @@ static int iqs7211e_release_touch(struct iqs7211e_data *data)
      */
     if (data->last_touched_state)
     {
-        ret = input_report_key(data->dev, INPUT_BTN_TOUCH, false,
-                               !config->report_abs, K_FOREVER);
-        if (ret < 0)
+        if (iqs7211e_runtime_reports_touch_state(config->report_abs))
         {
-            LOG_ERR("Failed to release touch: %d", ret);
-            return ret;
-        }
+            ret = input_report_key(data->dev, INPUT_BTN_TOUCH, false, false,
+                                   K_FOREVER);
+            if (ret < 0)
+            {
+                LOG_ERR("Failed to release touch: %d", ret);
+                return ret;
+            }
 
-        if (config->report_abs)
-        {
             ret = input_report_abs(data->dev, INPUT_ABS_X,
                                    data->finger_1_prev_x, false, K_FOREVER);
             if (ret < 0)
@@ -809,6 +811,39 @@ static int iqs7211e_release_touch(struct iqs7211e_data *data)
     data->finger_1_prev_dx = 0;
     data->finger_1_prev_dy = 0;
 
+    return 0;
+}
+
+/*
+ * A runtime Show Reset means that the sensor has returned to its power-on
+ * defaults. Event Mode cannot be relied on again until the reset is
+ * acknowledged, and the application-specific memory map must be restored
+ * before that acknowledgement. Release every host-owned input state first,
+ * then re-enter the normal settings -> ACK -> ATI -> Event Mode sequence.
+ */
+static int iqs7211e_begin_runtime_reinitialization(struct iqs7211e_data *data)
+{
+    int ret;
+
+    LOG_WRN("IQS7211E runtime reset detected - reinitializing");
+
+    k_work_cancel_delayable(&data->click_work);
+    ret = iqs7211e_release_click(data);
+    if (ret < 0)
+    {
+        return ret;
+    }
+
+    ret = iqs7211e_release_touch(data);
+    if (ret < 0)
+    {
+        return ret;
+    }
+
+    data->init_state = IQS7211E_INIT_UPDATE_SETTINGS;
+    data->reset_called = false;
+    data->touch_verify_pending = false;
+    atomic_clear(&data->rdy_recheck_attempts);
     return 0;
 }
 
@@ -1412,11 +1447,18 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
     {
         return ret;
     }
+
+    if (iqs7211e_runtime_show_reset(data->info_flags[0]))
+    {
+        return iqs7211e_begin_runtime_reinitialization(data);
+    }
+
     uint8_t num_fingers = iqs7211e_get_num_fingers(data);
     uint8_t gesture_event = iqs7211e_get_touchpad_event(data);
     bool coordinate_valid = iqs7211e_coordinate_sample_valid(
         num_fingers, data->finger_1_x, data->finger_1_y,
-        data->finger_1_touch_strength, data->finger_1_area);
+        data->finger_1_touch_strength, data->finger_1_area,
+        RESOLUTION_X, RESOLUTION_Y);
 
     /* Do not create a touch from an invalid first coordinate. Once a valid
      * contact exists, an invalid coordinate frame holds the last one instead
@@ -1576,7 +1618,11 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
         /* 3.1. Touch State Toggle */
         if (!data->last_touched_state)
         {
-            input_report_key(data->dev, INPUT_BTN_TOUCH, true, false, K_FOREVER);
+            if (iqs7211e_runtime_reports_touch_state(config->report_abs))
+            {
+                input_report_key(data->dev, INPUT_BTN_TOUCH, true, false,
+                                 K_FOREVER);
+            }
             data->last_touched_state = true;
         }
 
@@ -1653,8 +1699,11 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
 
         if (released_here)
         {
-            input_report_key(data->dev, INPUT_BTN_TOUCH, false, !config->report_abs,
-                             K_FOREVER);
+            if (iqs7211e_runtime_reports_touch_state(config->report_abs))
+            {
+                input_report_key(data->dev, INPUT_BTN_TOUCH, false, false,
+                                 K_FOREVER);
+            }
             data->last_touched_state = false;
             k_work_cancel_delayable(&data->stationary_report_work);
             k_work_cancel_delayable(&data->touch_verify_work);

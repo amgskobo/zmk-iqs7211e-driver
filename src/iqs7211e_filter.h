@@ -29,7 +29,8 @@ struct iqs7211e_relative_axis_result
 };
 
 bool iqs7211e_coordinate_sample_valid(uint8_t fingers, uint16_t x, uint16_t y,
-                                      uint16_t strength, uint16_t area);
+                                      uint16_t strength, uint16_t area,
+                                      uint16_t max_x, uint16_t max_y);
 
 void iqs7211e_axis_filter_reset(struct iqs7211e_axis_filter *state, uint16_t sample);
 struct iqs7211e_axis_filter_result

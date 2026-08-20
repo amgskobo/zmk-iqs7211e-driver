@@ -25,7 +25,6 @@
 
 // Config Settings Bits
 #define IQS7211E_EVENT_MODE_BIT 0 // 8
-#define IQS7211E_SHOW_RESET_BIT 7
 #define IQS7211E_SW_RESET_BIT 1 // (bit 9)
 #define IQS7211E_ACK_RESET_BIT 7
 #define IQS7211E_TP_RE_ATI_BIT 5

@@ -7,9 +7,10 @@
 #include "iqs7211e_filter.h"
 
 bool iqs7211e_coordinate_sample_valid(uint8_t fingers, uint16_t x, uint16_t y,
-                                      uint16_t strength, uint16_t area)
+                                      uint16_t strength, uint16_t area,
+                                      uint16_t max_x, uint16_t max_y)
 {
-    return fingers > 0U && x != UINT16_MAX && y != UINT16_MAX && strength > 0U && area > 0U;
+    return fingers > 0U && x <= max_x && y <= max_y && strength > 0U && area > 0U;
 }
 
 static uint16_t median3(uint16_t a, uint16_t b, uint16_t c)

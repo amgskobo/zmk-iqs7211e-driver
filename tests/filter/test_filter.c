@@ -5,6 +5,7 @@
 #include <stdlib.h>
 
 #include "iqs7211e_filter.h"
+#include "iqs7211e_runtime.h"
 
 #define TEST_DEADBAND 8
 
@@ -238,12 +239,36 @@ static void test_stationary_samples_decay_relative_velocity(void)
 
 static void test_coordinate_validity(void)
 {
-    CHECK(iqs7211e_coordinate_sample_valid(1, 500, 500, 300, 2));
-    CHECK(!iqs7211e_coordinate_sample_valid(0, 500, 500, 300, 2));
-    CHECK(!iqs7211e_coordinate_sample_valid(1, UINT16_MAX, 500, 300, 2));
-    CHECK(!iqs7211e_coordinate_sample_valid(1, 500, UINT16_MAX, 300, 2));
-    CHECK(!iqs7211e_coordinate_sample_valid(1, 500, 500, 0, 2));
-    CHECK(!iqs7211e_coordinate_sample_valid(1, 500, 500, 300, 0));
+    const uint16_t max_x = 1024;
+    const uint16_t max_y = 1024;
+
+    CHECK(iqs7211e_coordinate_sample_valid(1, 500, 500, 300, 2, max_x, max_y));
+    CHECK(iqs7211e_coordinate_sample_valid(1, max_x, max_y, 300, 2, max_x, max_y));
+    CHECK(!iqs7211e_coordinate_sample_valid(0, 500, 500, 300, 2, max_x, max_y));
+    CHECK(!iqs7211e_coordinate_sample_valid(1, max_x + 1, 500, 300, 2, max_x, max_y));
+    CHECK(!iqs7211e_coordinate_sample_valid(1, 500, max_y + 1, 300, 2, max_x, max_y));
+    CHECK(!iqs7211e_coordinate_sample_valid(1, UINT16_MAX - 1, 500, 300, 2,
+                                            max_x, max_y));
+    CHECK(!iqs7211e_coordinate_sample_valid(1, 500, UINT16_MAX - 1, 300, 2,
+                                            max_x, max_y));
+    CHECK(!iqs7211e_coordinate_sample_valid(1, UINT16_MAX, 500, 300, 2, max_x, max_y));
+    CHECK(!iqs7211e_coordinate_sample_valid(1, 500, UINT16_MAX, 300, 2, max_x, max_y));
+    CHECK(!iqs7211e_coordinate_sample_valid(1, 500, 500, 0, 2, max_x, max_y));
+    CHECK(!iqs7211e_coordinate_sample_valid(1, 500, 500, 300, 0, max_x, max_y));
+}
+
+static void test_touch_state_reporting_policy(void)
+{
+    CHECK(iqs7211e_runtime_reports_touch_state(true));
+    CHECK(!iqs7211e_runtime_reports_touch_state(false));
+}
+
+static void test_runtime_show_reset_detection(void)
+{
+    CHECK(!iqs7211e_runtime_show_reset(0x00));
+    CHECK(!iqs7211e_runtime_show_reset(0x7F));
+    CHECK(iqs7211e_runtime_show_reset(0x80));
+    CHECK(iqs7211e_runtime_show_reset(0xFF));
 }
 
 int main(void)
@@ -256,6 +281,8 @@ int main(void)
     test_absolute_relative_parity();
     test_stationary_samples_decay_relative_velocity();
     test_coordinate_validity();
-    puts("iqs7211e filter tests passed");
+    test_touch_state_reporting_policy();
+    test_runtime_show_reset_detection();
+    puts("iqs7211e host tests passed");
     return 0;
 }
