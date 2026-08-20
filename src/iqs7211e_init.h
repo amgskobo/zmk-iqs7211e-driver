@@ -43,6 +43,13 @@
  *   short pauses.
  * - A stationary touch enters Idle-Touch after 5 s. Its 15 ms report rate is
  *   unchanged, so movement response remains as fast as Active mode.
+ * - The Idle-Touch timeout is the chip's own stuck-touch guard: once it
+ *   expires it reseeds the references, which makes a resting finger disappear.
+ *   AZD123 5.2.2 says to set it to 0 when the host takes that job. The driver
+ *   therefore writes HOST_VERIFY whenever host touch verification is enabled,
+ *   in either report mode, and keeps the 60 s FALLBACK when host verification
+ *   is disabled. Leaving both armed lets the chip reseed underneath a touch the
+ *   host still believes in; disabling both leaves a stuck touch unbounded.
  */
 #define ACTIVE_MODE_REPORT_RATE_0                0x0F
 #define ACTIVE_MODE_REPORT_RATE_1                0x00
@@ -56,8 +63,10 @@
 #define LP2_MODE_REPORT_RATE_1                   0x00
 #define ACTIVE_MODE_TIMEOUT_0                    0x05
 #define ACTIVE_MODE_TIMEOUT_1                    0x00
-#define IDLE_TOUCH_MODE_TIMEOUT_0                0x3C
-#define IDLE_TOUCH_MODE_TIMEOUT_1                0x00
+#define IDLE_TOUCH_MODE_TIMEOUT_HOST_VERIFY_0    0x00
+#define IDLE_TOUCH_MODE_TIMEOUT_HOST_VERIFY_1    0x00
+#define IDLE_TOUCH_MODE_TIMEOUT_FALLBACK_0       0x3C
+#define IDLE_TOUCH_MODE_TIMEOUT_FALLBACK_1       0x00
 #define IDLE_MODE_TIMEOUT_0                      0x05
 #define IDLE_MODE_TIMEOUT_1                      0x00
 #define LP1_MODE_TIMEOUT_0                       0x37
@@ -97,12 +106,18 @@
  * detected. What separates the two is what happens next: sustained contact
  * stays well clear of the level a hover settles at. Raising CLEAR into that gap
  * lets a false detection release on its own rather than latching, which the
- * stock value - far below SET - could not do. SET stays at Azoteq's example
- * value: hardware testing showed that raising it by one step increased contact
+ * stock value - far below SET - could not do.
+ *
+ * SET therefore cannot also satisfy AZD123 4.3.1, which puts it below the
+ * weakest of four channels under a light press placed between them: on a panel
+ * where hover reaches that level, the value the procedure asks for falls below
+ * CLEAR and the two requirements exclude each other. Whichever way that is
+ * resolved is a property of the panel, so both thresholds need re-deriving for
+ * a different one rather than carrying over. Raising SET also costs contact
  * fragmentation during taps.
  */
 #define TRACKPAD_TOUCH_SET_THRESHOLD             0x20
-#define TRACKPAD_TOUCH_CLEAR_THRESHOLD           0x10
+#define TRACKPAD_TOUCH_CLEAR_THRESHOLD           0x12
 #define ALP_THRESHOLD_0                          0x08
 #define ALP_THRESHOLD_1                          0x00
 #define ALP_SET_DEBOUNCE                         0x04
@@ -157,13 +172,14 @@
 #define XY_DYNAMIC_FILTER_BOTTOM_BETA            0x07
 #define XY_DYNAMIC_FILTER_STATIC_FILTER_BETA     0x80
 /*
- * Movement below this (in output-resolution pixels) counts as a stationary
- * touch, which gates the TP Movement flag and the drop to Idle-Touch mode
- * (datasheet 7.5). Restored to the reference value alongside the XY filter
- * settings above, which the same commit had changed. It does not affect
- * reported coordinates.
+ * Movement below this, in output-resolution pixels, counts as a stationary
+ * touch. It gates the TP Movement flag and the drop to Idle-Touch mode
+ * (datasheet 7.5) without altering the reported coordinates. Keeping it tight
+ * lets the chip enter Idle-Touch without delaying deliberate slow motion. The
+ * host coordinate filter does not use this flag: captured traces showed that
+ * gating on it added latency without materially reducing visible jitter.
  */
-#define STATIONARY_TOUCH_MOV_THRESHOLD           0x14
+#define STATIONARY_TOUCH_MOV_THRESHOLD           0x02
 #define FINGER_SPLIT_FACTOR                      0x03
 /*
  * Trim removes the dead margin at each edge and rescales what is left back over
