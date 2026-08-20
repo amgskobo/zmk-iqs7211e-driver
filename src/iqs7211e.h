@@ -10,6 +10,7 @@
 #include <zephyr/drivers/i2c.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/kernel.h>
+#include "iqs7211e_filter.h"
 
 // Regs
 #define IQS7211E_MM_PROD_NUM 0x00
@@ -127,8 +128,9 @@ struct iqs7211e_config
     uint8_t stationary_report_layer_count;
     uint8_t rotate_cw;
     bool report_abs;
+    uint16_t jitter_deadband;
     uint16_t stationary_report_interval_ms;
-    uint16_t stationary_touch_verify_interval_ms;
+    uint16_t touch_verify_interval_ms;
 };
 
 struct iqs7211e_data
@@ -166,17 +168,10 @@ struct iqs7211e_data
     uint16_t finger_1_prev_y;
     int16_t finger_1_prev_dx;
     int16_t finger_1_prev_dy;
-    int16_t finger_1_jitter_residual_x;
-    int16_t finger_1_jitter_residual_y;
-    uint16_t finger_1_filtered_x;
-    uint16_t finger_1_filtered_y;
-    uint16_t finger_1_median_prev_1_x;
-    uint16_t finger_1_median_prev_1_y;
-    uint16_t finger_1_median_prev_2_x;
-    uint16_t finger_1_median_prev_2_y;
+    struct iqs7211e_axis_filter finger_1_filter_x;
+    struct iqs7211e_axis_filter finger_1_filter_y;
     bool last_touched_state;
-    bool stationary_verify_pending;
-    uint32_t stationary_last_verify_uptime_ms;
+    bool touch_verify_pending;
     uint32_t diagnostic_irq_count;
     uint32_t diagnostic_work_count;
     uint32_t diagnostic_report_count;
@@ -184,5 +179,7 @@ struct iqs7211e_data
     int diagnostic_last_report_ret;
     struct k_work_delayable stationary_report_work;
     struct k_work_sync stationary_report_work_sync;
+    struct k_work_delayable touch_verify_work;
+    struct k_work_sync touch_verify_work_sync;
     struct k_work_sync work_sync;
 };

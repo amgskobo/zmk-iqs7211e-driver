@@ -33,9 +33,10 @@
 | `scroll-trigger-layers` | array | any | スクロールレイヤーを自動有効化してよい highest active layer。省略時はどのレイヤーでも有効化します。 |
 | `rotate-cw` | uint | 0 | **物理配置に合わせた時計回りの回転角度** (0=0°, 1=90°, 2=180°, 3=270°)。ドライバ内部でスクロールエリア判定も含めて一括して座標変換を行います。 |
 | `report-abs` | boolean | false | true の場合、相対座標ではなく絶対座標を報告します。 |
-| `stationary-report-interval-ms` | int | 0 | `report-abs` 有効時、タッチが継続している間に最後の絶対座標レポートをこの周期で再送します。0 で無効です。 |
-| `stationary-report-layers` | array | any | stationary absolute resend を許可するレイヤー。上に別のレイヤーが乗っていても、列挙したいずれかが有効なら再送します。省略時はどのレイヤーでも再送します。 |
-| `stationary-touch-verify-interval-ms` | int | 120 | stationary resend 中、この周期でレポートを1回読み、タッチが残っているか確認します。0 で fail-safe 確認を無効化します。 |
+| `jitter-deadband` | int | 8 | ラバーバンド式ジッタゲートが保持する軸ごとの座標差。X/Yへ独立に適用し、ユークリッド距離では判定しません。0ではゲートだけを無効にし、3サンプル中央値フィルターは維持します。既定値はTrackpad01向けの保守的な開始値で、別パネルでは実測後に上書きします。有効範囲は0～1024です。 |
+| `stationary-report-interval-ms` | int | 0 | 絶対モード専用です。`report-abs` 有効時、タッチ中に最後の絶対座標レポートをこの周期で再送します。相対モードでは無視され、0で無効です。 |
+| `stationary-report-layers` | array | any | 絶対モード専用です。stationary absolute resendを許可するレイヤー。上に別のレイヤーが乗っていても、列挙したいずれかが有効なら再送します。省略時はどのレイヤーでも再送します。touch verifyは制限しません。 |
+| `touch-verify-interval-ms` | int | 120 | 絶対・相対の両モードで、タッチ継続中に通常レポートをこの周期で1回読みます。release復旧と静止中の相対速度減衰を両モードで揃えます。stationary resendやレイヤー制限には依存しません。0ではホスト側verifyを無効化し、チップ側の60秒fallbackを使います。 |
 
 ### 2.1 絶対座標レポートモード
 
@@ -43,7 +44,13 @@
 これは、デジタイザーからマウスへの変換器など、絶対データを期待する ZMK 入力プロセッサと組み合わせる場合に便利です。
 絶対座標は 0 から 1024 の範囲で報告されます (チップの解像度定義による、最大値を含む)。
 
-### 2.2 静止中の絶対座標再送
+絶対モードと相対モードは、設定可能なラバーバンドdeadbandと3サンプル中央値から成る同じ座標フィルターを使います。一時的な無効座標は直前の出力を保持し、フィルター履歴も進めません。平滑化はチップ内MAVとDynamic IIRに任せ、ホスト側でIIRを重ねません。すべてのフィルター状態は接触開始ごとに初期化されます。
+
+フィルター設定はビルド時のDevice Treeプロパティです。bindingが既定値を定義し、選択値を読み取り専用のdevice configへ格納し、接触ごとに変化するフィルター状態はdevice dataへ分離します。固定の22 mm Trackpad01向けdriver既定値は`jitter-deadband = 8`です。絶対・相対座標へ分岐する前に同じ処理を適用し、別の値が必要なボードだけoverlayで上書きします。
+
+### 2.2 静止中の絶対座標再送とタッチ確認
+
+stationary resendは絶対座標モード専用です。`report-abs;`と0以外の`stationary-report-interval-ms`の両方が必要です。相対座標モードでは再送周期と再送レイヤーを無視します。一方、touch verifyは両モードで動作します。
 
 IQS7211E の Event Mode では、指を止めたままにすると新しいイベントが発生しなくなることがあります。`report-abs` を joystick や padstick のような入力プロセッサへ渡す場合、タッチは継続していても下流のプロセッサが止まったように見えることがあります。
 
@@ -51,11 +58,15 @@ IQS7211E の Event Mode では、指を止めたままにすると新しいイ�
 
 `stationary-report-layers` で、再送を許可するレイヤーを制限できます。レイヤーごとに絶対座標を別の入力プロセッサへ渡す構成で便利です。たとえば padstick レイヤーでは再送し、scroll や matrix レイヤーでは再送しない、という使い分けができます。
 
+配列の値はビットマスクではなくレイヤー番号です。`<1>`はlayer 1だけ、`<0 1>`はlayer 0と1を表します。この設定が制御するのは周期的な再送だけであり、そのレイヤーの座標フィルターを有効化したり強さを変更したりはしません。
+
 判定は「列挙したいずれかのレイヤーが有効か」で行い、上に別のレイヤーが乗っていても許可します。`scroll-trigger-layers` の highest active layer 判定とは意図的に異なります。ZMK はプロセッサチェーンをイベントごとに、その時点で有効なレイヤーから、かつリスナの**最初に一致した項目**で選びます（最上位レイヤーではありません）。そのため、列挙したレイヤーがチェーンを保持している最中に、より上のレイヤーが乗ることがあります。最上位だけを見ると、そのチェーンが頼っている再送を止めてしまい、静止した接触がそこで死にます。
 
-`stationary-touch-verify-interval-ms` は、stationary resend 中にタッチが残っているかを定期的に確認します。読み取りに失敗した場合やセンサーが指なしを報告した場合、ドライバーはタッチを release して古い座標の再送を止めます。デフォルトは 120 ms です。この fail-safe が不要な場合のみ 0 にしてください。
+`touch-verify-interval-ms` は、絶対・相対の両モードで、タッチ継続中に物理タッチが残っているかを独立して確認します。`stationary-report-interval-ms` が0でも動作し、`stationary-report-layers` のレイヤー制限も受けません。再送先の選択はプロセッサ側の都合ですが、タッチの生存確認はセンサードライバーの責務だからです。両モードが同じ確認サンプルを受けるため、release復旧だけでなく、相対モードの静止中速度減衰と指を離した後の慣性も揃います。読み取りに失敗した場合やセンサーが指なしを報告した場合、ドライバーはタッチをreleaseして古い座標の再送も止めます。デフォルトは120 msです。このホスト側fail-safeが不要な場合のみ0にしてください。
 
 この確認は `INFO_FLAGS` だけの読み取りではなく、通常のレポート経路を1回丸ごと通します。部分的に読んで STOP すると、ジェスチャーや座標イベントのために開いていた communication window を閉じてしまい、そのイベントを失うためです。したがって verify のタイミングでも座標の出力やクリックの発行が起こり得ます。
+
+ホスト側verifyが有効な場合、チップがホストの保持中に参照値を再seedしないよう、Idle-Touch timeoutは0に設定します。verify周期0の場合だけ、チップ側の60秒timeoutをstuck-touchのfallbackとして残します。
 
 例:
 
@@ -63,10 +74,10 @@ IQS7211E の Event Mode では、指を止めたままにすると新しいイ�
 report-abs;
 stationary-report-interval-ms = <20>;
 stationary-report-layers = <1>;
-stationary-touch-verify-interval-ms = <120>;
+touch-verify-interval-ms = <120>;
 ```
 
-この例では、layer 1 が有効な間は 20 ms ごとに stationary resend を行い、120 ms ごとにタッチの存在を確認します。
+この例では、layer 1 が有効な間は20 msごとにstationary resendを行います。タッチの存在確認はlayer 1が無効な間も含め、全レイヤーで120 msごとに動作します。
 
 ### 2.3 スクロールレイヤーの発火制御
 
@@ -85,6 +96,14 @@ scroll-trigger-layers = <0>;
 この例では layer 6 をスクロール用レイヤーとして使いますが、発火できるのは layer 0 が highest active layer の時だけです。padstick や mouse-only 用のレイヤーでは、右端も含めたパッド全体を使いたい場合に有効です。
 
 `scroll-trigger-layers` を省略した場合は従来どおり、どの layer からでも `scroll-layer` を発火できます。
+
+### 2.4 フィルターテスト
+
+デッドバンド、瞬間的な外れ値、接触開始時の初期化、一時的な無効座標、静止サンプルによる相対速度の減衰、絶対・相対モードの同等性は次のテストで確認できます。相対deltaは、絶対モードと同じfiltered座標から導出されることを確認します。
+
+```sh
+sh tests/filter/run.sh
+```
 
 ## 3. インストール (GitHub Actions)
 
@@ -164,9 +183,10 @@ manifest:
         // scroll-trigger-layers = <0>; // 任意: 指定した highest active layer の時だけ scroll mode に入る
         rotate-cw = <0>;
         // report-abs; // 絶対座標を使用する場合 (0-1024、最大値を含む)
+        // 以下の絶対モード専用設定には report-abs が必要です。
         // stationary-report-interval-ms = <20>; // 任意: 静止中の ABS レポートを再送する
         // stationary-report-layers = <1>; // 任意: 列挙したいずれかのレイヤーが有効な間だけ再送する
-        // stationary-touch-verify-interval-ms = <120>; // 任意: 再送中にタッチ継続を確認する
+        // touch-verify-interval-ms = <120>; // 任意: レイヤー非依存でタッチ継続を確認する
     };
 };
 
@@ -265,3 +285,92 @@ Azoteq が提供する `src/iqs7211e_init.h` ファイルを編集すること�
 - [iqs7211e_datasheet](/docs/iqs7211e_datasheet.pdf)
 - [azd123_iqs721xy_trackpad_userguide](/docs/azd123_iqs721xy_trackpad_userguide.pdf)
 - [azd128-gamepad-trackpad-design-guide_v1.0](/docs/azd128-gamepad-trackpad-design-guide_v1.0.pdf)
+
+座標処理を変更するときは、以下の「座標パイプライン」も参照してください。
+
+## 5. 座標パイプライン
+
+この節は、実装を変更する開発者やエージェント向けの保守資料です。ドライバーが座標をどう扱うか、各設定が何と何を引き換えにしているか、固定の22 mm Trackpad01プロファイルをどう検証するかをまとめます。
+
+### 5.1 処理段の構成
+
+1レポートは次の順に処理されます。
+
+1. **12 byte一括読出し** — GestureからFinger 1 Areaまでを1回のI2C通信で確定させます。分割して読むと、1イベントに通信窓が2回必要になり、片方を取り逃す可能性があります。
+2. **接触の整合性判定** — `fingers > 0`、X/Yが`0xFFFF`でない、strengthとareaが非ゼロであることをまとめて確認します。
+3. **初回接触の判定** — 無効な座標から接触を開始しません。接触成立後の一時的な無効フレームは、接触を終わらせず直前値を保持します。
+4. **ラバーバンドdeadband** — 出力は入力の後方deadbandピクセルに追従します。
+5. **3サンプル中央値** — 単発の外れ値を除去します。
+
+絶対モードと相対モードは2〜5を共有します。共通のfiltered X/Yを作った後でのみ、絶対座標の報告と相対deltaへの変換へ分岐します。この境界を前へ動かすと、同じ指の動きに対して2つのモードが異なる座標経路を持つため、変更時は`test_absolute_relative_parity`で同等性を確認してください。
+
+### 5.2 パラメータ化と状態の境界
+
+座標フィルターの調整値は、ビルド時のDevice Treeプロパティとして公開します。
+
+| 実効設定 | 既定値 | 上書きするDevice Treeプロパティ |
+|---|---:|---|
+| ラバーバンド幅 | 8 | `jitter-deadband` |
+
+bindingの既定値、`struct iqs7211e_config`の型、`DT_INST_PROP_OR`のfallbackは一致させます。固定の22 mm Trackpad01向けdriver既定値は`jitter-deadband = 8`です。パネル、電極、表面材などのハードウェア構成を変更する場合だけ再測定し、必要な値をboard overlayで上書きします。
+
+deadband履歴や中央値履歴などの可変状態は`struct iqs7211e_data`に置き、読み取り専用のdevice configと混ぜません。
+
+`stationary-report-interval-ms`と`stationary-report-layers`は座標フィルターではなく、絶対モードへ分岐した後の静止中再送だけを制御します。`touch-verify-interval-ms`は再送workから分離したセンサー生存確認であり、絶対・相対の両モードで再送周期やレイヤーに依存せず動作します。`stationary-report-layers = <1>`はlayer 1だけを表し、layer 0と1なら`<0 1>`と書きます。値はビットマスクではありません。
+
+### 5.3 各段が存在する理由
+
+#### ホスト側でIIRを重ねない理由
+
+IQS7211Eはチップ内でMAVとDynamic IIRを実行します（datasheet 7.8）。ホスト側でさらにIIRを重ねると平滑化が二重になり、移動経路が縮んで遅れが増えます。このドライバーはチップ内の平滑化を最終結果として扱い、ホスト側IIRを持ちません。
+
+#### deadbandを最小限にする理由
+
+ラバーバンドdeadbandは静止中や移動中の微細な揺れを吸収しますが、値を上げると意図した動きにも同じ軸方向の遅れを加えます。実測した静止ノイズを抑えられる最小値を使い、追従性との釣り合いを取ります。TP Movementフラグによる追加ゲートは、固定22 mmパネルの実測で有意な改善がなく、確認報数を増やすと遅延と追いつきジャンプが増えたため使用しません。
+
+### 5.4 固定パネル値の検証方法
+
+#### Touch SET / CLEAR
+
+閾値は`Threshold = Reference × (1 + Multiplier / 128)`です（datasheet 5.5.1）。乗数が大きいほど鈍くなります。
+
+AZD123 4.3.1とAZD128 5.5.5の基本手順は次のとおりです。
+
+1. 小さい指で**4チャネルの中間**を軽く押し、4つのdeltaが同程度になる位置へ置きます。
+2. SETを4チャネルの最小値より下に置きます。
+3. CLEARをSETより下げてヒステリシスを作ります。
+
+ホバーが軽い接触と同じ水準まで届く場合、この手順と誤検出解除が両立しないことがあります。誤検出を解除するにはCLEARをホバー水準より上に置く必要がありますが、SETはCLEARより高くなければなりません。この衝突が起きた場合は、どちらを優先したかと理由を残してください。
+
+#### jitter-deadband
+
+下限は静止ログで観測した残留変位を吸収できる値です。上限は最小の意図的な移動を潰さない値です。静止ログと小さな円運動のログを同じ設定で再生し、静止時の移動量、移動中の経路長、最大ステップ、追従遅延を比較して決めます。
+
+#### ATI
+
+AZD123 4.2.1とAZD128 5.5.4に従い、次を確認します。
+
+- ATI Compensationが0〜1023の中央付近にある
+- ATI Errorフラグ（INFO_FLAGS bit 3）が立たない
+- referenceが`ATI target ± Reference drift limit`の内側にある
+- 接触時のdeltaが用途に足りる
+
+Coarse divider / multiplierは通常AZD123表4.1のindex 0から動かさず、Fine dividerで調整します。Fine dividerは16未満に下げません。
+
+#### X/Y Trim
+
+AZD128 6.4の基準は、両軸で座標0と最大解像度へ到達できることです。四隅と四辺を個別に確認します。trimは1軸の両端へ同じ量だけ効くため、片端だけの非対称な余りは解消できません。
+
+### 5.5 変更時の確認項目
+
+1. 中央へ軽く触れて静止し、contactが1回、途中releaseが0回、出力移動がほぼ0であること
+2. 軽いタップを反復し、contact数とrelease数が一致すること
+3. 低速直線、円、高速往復で、途中release、IRQ/work/reportの欠落、I2C errorが0であること
+4. `tests/filter/run.sh`が通り、絶対・相対のparityテストが成功すること
+5. 最終ファームウェアのFLASH/RAMを変更前と比較すること
+
+### 5.6 参照箇所
+
+- [IQS7211E Datasheet](/docs/iqs7211e_datasheet.pdf): 5.5.1、5.6、5.7、7.5、7.8、11.9、Appendix A
+- [AZD123 IQS721xy Trackpad User Guide](/docs/azd123_iqs721xy_trackpad_userguide.pdf): 4.2、4.3、4.6、5.2、5.3、5.6
+- [AZD128 Gamepad Trackpad Design Guide](/docs/azd128-gamepad-trackpad-design-guide_v1.0.pdf): 5.5、6.2、6.3、6.4

@@ -22,48 +22,6 @@ LOG_MODULE_REGISTER(iqs7211e, CONFIG_ZMK_LOG_LEVEL);
 /* Spacing between the press and release edges of a generated click. */
 #define IQS7211E_CLICK_EDGE_MS 20
 
-/*
- * IQS7211E lacks the dedicated coordinate jitter gate available on IQS9151.
- * Keep a small rubber-band residual on each relative axis: motion inside the
- * band is held, while motion beyond it is emitted without discarding slow,
- * intentional movement.
- */
-#define IQS7211E_POINTER_JITTER_DEADBAND 16
-
-
-static uint16_t iqs7211e_apply_coordinate_deadband(uint16_t sample, uint16_t *filtered)
-{
-    int32_t delta = (int32_t)sample - *filtered;
-
-    if (delta > IQS7211E_POINTER_JITTER_DEADBAND)
-    {
-        *filtered = sample - IQS7211E_POINTER_JITTER_DEADBAND;
-    }
-    else if (delta < -IQS7211E_POINTER_JITTER_DEADBAND)
-    {
-        *filtered = sample + IQS7211E_POINTER_JITTER_DEADBAND;
-    }
-
-    return *filtered;
-}
-
-static uint16_t iqs7211e_median3(uint16_t a, uint16_t b, uint16_t c)
-{
-    if (a > b)
-    {
-        uint16_t tmp = a;
-        a = b;
-        b = tmp;
-    }
-    if (b > c)
-    {
-        b = c;
-    }
-
-    return (a > b) ? a : b;
-}
-
-
 static enum iqs7211e_gestures_event iqs7211e_get_touchpad_event(const struct iqs7211e_data *data);
 static bool iqs7211e_init_state(struct iqs7211e_data *data);
 static int iqs7211e_get_product_num(struct iqs7211e_data *data);
@@ -75,6 +33,7 @@ static int iqs7211e_read_bytes(const struct i2c_dt_spec *i2c, uint8_t reg, uint8
 static int iqs7211e_write_bytes(const struct i2c_dt_spec *i2c, uint8_t reg, const uint8_t *data, size_t numBytes);
 static void iqs7211e_work_handler(struct k_work *work);
 static void iqs7211e_stationary_report_work_handler(struct k_work *work);
+static void iqs7211e_touch_verify_work_handler(struct k_work *work);
 static void iqs7211e_click_work_handler(struct k_work *work);
 static void iqs7211e_queue_clicks(struct iqs7211e_data *data, uint16_t button, uint8_t clicks);
 static int iqs7211e_report_data(struct iqs7211e_data *data);
@@ -91,7 +50,8 @@ static bool iqs7211e_layer_allowed(const uint8_t *layers, uint8_t layer_count);
 static bool iqs7211e_scroll_trigger_layer_allowed(const struct iqs7211e_config *config);
 static bool iqs7211e_stationary_report_layer_allowed(const struct iqs7211e_config *config);
 static bool iqs7211e_stationary_chain_alive(const struct iqs7211e_data *data);
-static void iqs7211e_stationary_report_release_touch(struct iqs7211e_data *data);
+static bool iqs7211e_touch_verify_chain_alive(const struct iqs7211e_data *data);
+static void iqs7211e_release_touch(struct iqs7211e_data *data);
 static uint8_t iqs7211e_get_bit(uint8_t byte, uint8_t pos);
 static uint8_t iqs7211e_get_num_fingers_from_info_flags(const uint8_t *info_flags);
 static uint8_t iqs7211e_get_num_fingers(const struct iqs7211e_data *data);
@@ -592,6 +552,13 @@ static bool iqs7211e_stationary_chain_alive(const struct iqs7211e_data *data)
            data->last_touched_state;
 }
 
+static bool iqs7211e_touch_verify_chain_alive(const struct iqs7211e_data *data)
+{
+    const struct iqs7211e_config *config = data->dev->config;
+
+    return config->touch_verify_interval_ms > 0U && data->last_touched_state;
+}
+
 static uint8_t iqs7211e_get_num_fingers_from_info_flags(const uint8_t *info_flags)
 {
     uint8_t byte = info_flags[1];
@@ -605,9 +572,12 @@ static uint8_t iqs7211e_get_num_fingers(const struct iqs7211e_data *data)
     return iqs7211e_get_num_fingers_from_info_flags(data->info_flags);
 }
 
-static void iqs7211e_stationary_report_release_touch(struct iqs7211e_data *data)
+static void iqs7211e_release_touch(struct iqs7211e_data *data)
 {
     const struct iqs7211e_config *config = data->dev->config;
+
+    k_work_cancel_delayable(&data->stationary_report_work);
+    k_work_cancel_delayable(&data->touch_verify_work);
 
     /*
      * The coordinates belong to the touch being released, so they only go out
@@ -623,7 +593,8 @@ static void iqs7211e_stationary_report_release_touch(struct iqs7211e_data *data)
      */
     if (data->last_touched_state)
     {
-        input_report_key(data->dev, INPUT_BTN_TOUCH, false, false, K_FOREVER);
+        input_report_key(data->dev, INPUT_BTN_TOUCH, false, !config->report_abs,
+                         K_FOREVER);
         data->last_touched_state = false;
 
         if (config->report_abs)
@@ -643,8 +614,6 @@ static void iqs7211e_stationary_report_release_touch(struct iqs7211e_data *data)
     data->touch_count = 0;
     data->finger_1_prev_dx = 0;
     data->finger_1_prev_dy = 0;
-    data->finger_1_jitter_residual_x = 0;
-    data->finger_1_jitter_residual_y = 0;
 }
 
 static int iqs7211e_write_defaults(struct iqs7211e_data *data)
@@ -696,8 +665,11 @@ static int iqs7211e_write_defaults(struct iqs7211e_data *data)
     buf[9] = LP2_MODE_REPORT_RATE_1;
     buf[10] = ACTIVE_MODE_TIMEOUT_0;
     buf[11] = ACTIVE_MODE_TIMEOUT_1;
-    buf[12] = IDLE_TOUCH_MODE_TIMEOUT_0;
-    buf[13] = IDLE_TOUCH_MODE_TIMEOUT_1;
+    bool host_touch_verify = config->touch_verify_interval_ms > 0U;
+    buf[12] = host_touch_verify ? IDLE_TOUCH_MODE_TIMEOUT_HOST_VERIFY_0
+                                : IDLE_TOUCH_MODE_TIMEOUT_FALLBACK_0;
+    buf[13] = host_touch_verify ? IDLE_TOUCH_MODE_TIMEOUT_HOST_VERIFY_1
+                                : IDLE_TOUCH_MODE_TIMEOUT_FALLBACK_1;
     buf[14] = IDLE_MODE_TIMEOUT_0;
     buf[15] = IDLE_MODE_TIMEOUT_1;
     buf[16] = LP1_MODE_TIMEOUT_0;
@@ -970,13 +942,13 @@ static void iqs7211e_work_handler(struct k_work *work)
         {
             data->diagnostic_report_count++;
         }
-        if (ret < 0 && data->stationary_verify_pending)
+        if (ret < 0 && data->touch_verify_pending)
         {
-            LOG_WRN("Stationary touch verify failed; releasing touch");
-            iqs7211e_stationary_report_release_touch(data);
+            LOG_WRN("Touch verify failed; releasing touch");
+            iqs7211e_release_touch(data);
         }
     }
-    data->stationary_verify_pending = false;
+    data->touch_verify_pending = false;
     const struct iqs7211e_config *config = data->dev->config;
     int rdy_raw = gpio_pin_get_raw(config->irq_gpio.port, config->irq_gpio.pin);
     if (rdy_raw == 0)
@@ -984,11 +956,8 @@ static void iqs7211e_work_handler(struct k_work *work)
         data->diagnostic_rdy_low_count++;
     }
     LOG_DBG("FLOW irq=%u work=%u report=%u rdy_low=%u rdy_raw=%d report_ret=%d",
-            data->diagnostic_irq_count,
-            data->diagnostic_work_count,
-            data->diagnostic_report_count,
-            data->diagnostic_rdy_low_count,
-            rdy_raw,
+            data->diagnostic_irq_count, data->diagnostic_work_count,
+            data->diagnostic_report_count, data->diagnostic_rdy_low_count, rdy_raw,
             data->diagnostic_last_report_ret);
     if (rdy_raw < 0)
     {
@@ -1074,38 +1043,45 @@ static void iqs7211e_stationary_report_work_handler(struct k_work *work)
         return;
     }
 
-    uint32_t now = k_uptime_get_32();
-    if (config->stationary_touch_verify_interval_ms > 0 &&
-        (uint32_t)(now - data->stationary_last_verify_uptime_ms) >=
-            config->stationary_touch_verify_interval_ms)
-    {
-        /*
-         * Verification must consume the complete report packet. A partial
-         * INFO_FLAGS read followed by STOP can close an RDY window that was
-         * opened for a gesture or coordinate event, losing that event before
-         * the normal report work gets to it. Queue the regular report path
-         * with the IRQ masked so it is the sole owner of this communication
-         * window.
-         */
-        data->stationary_verify_pending = true;
-        if (set_gpio_interrupt(data->dev, false) < 0 || k_work_submit(&data->work) < 0)
-        {
-            data->stationary_verify_pending = false;
-            iqs7211e_stationary_report_release_touch(data);
-            if (set_gpio_interrupt(data->dev, true) < 0)
-            {
-                LOG_ERR("Failed to restore IQS7211E interrupt after verify failure");
-            }
-        }
-        return;
-    }
-
     input_report_abs(data->dev, INPUT_ABS_X, data->finger_1_prev_x, false, K_FOREVER);
     input_report_abs(data->dev, INPUT_ABS_Y, data->finger_1_prev_y, true, K_FOREVER);
 
     if (iqs7211e_stationary_chain_alive(data))
     {
         k_work_reschedule(&data->stationary_report_work, K_MSEC(config->stationary_report_interval_ms));
+    }
+}
+
+static void iqs7211e_touch_verify_work_handler(struct k_work *work)
+{
+    struct k_work_delayable *d_work = k_work_delayable_from_work(work);
+    struct iqs7211e_data *data =
+        CONTAINER_OF(d_work, struct iqs7211e_data, touch_verify_work);
+
+    if (atomic_get(&data->suspended) || !iqs7211e_touch_verify_chain_alive(data))
+    {
+        return;
+    }
+
+    /*
+     * Verification must consume the complete report packet. A partial
+     * INFO_FLAGS read followed by STOP can close an RDY window that was opened
+     * for a gesture or coordinate event, losing that event before the normal
+     * report work gets to it. Queue the regular report path with the IRQ masked
+     * so it is the sole owner of this communication window.
+     *
+     * This timer is intentionally independent of stationary-report-work and
+     * its layer gate. It verifies the physical touch, not a processor route.
+     */
+    data->touch_verify_pending = true;
+    if (set_gpio_interrupt(data->dev, false) < 0 || k_work_submit(&data->work) < 0)
+    {
+        data->touch_verify_pending = false;
+        iqs7211e_release_touch(data);
+        if (!atomic_get(&data->suspended) && set_gpio_interrupt(data->dev, true) < 0)
+        {
+            LOG_ERR("Failed to restore IQS7211E interrupt after verify failure");
+        }
     }
 }
 
@@ -1119,6 +1095,17 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
     }
     uint8_t num_fingers = iqs7211e_get_num_fingers(data);
     uint8_t gesture_event = iqs7211e_get_touchpad_event(data);
+    bool coordinate_valid = iqs7211e_coordinate_sample_valid(
+        num_fingers, data->finger_1_x, data->finger_1_y,
+        data->finger_1_touch_strength, data->finger_1_area);
+
+    /* Do not create a touch from an invalid first coordinate. Once a valid
+     * contact exists, an invalid coordinate frame holds the last one instead
+     * of ending the contact. */
+    if (num_fingers > 0U && !coordinate_valid && data->touch_count == 0U)
+    {
+        num_fingers = 0U;
+    }
 
     /* 1. Canonicalize coordinates (Normalized to user orientation) */
     int16_t x;
@@ -1129,10 +1116,18 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
         int16_t raw_x = data->finger_1_x;
         int16_t raw_y = data->finger_1_y;
 
-        x = raw_x;
-        y = raw_y;
+        if (!coordinate_valid)
+        {
+            x = data->finger_1_prev_x;
+            y = data->finger_1_prev_y;
+        }
+        else
+        {
+            x = raw_x;
+            y = raw_y;
+        }
 
-        if (config->rotate_cw == 1)
+        if (coordinate_valid && config->rotate_cw == 1)
         {
             /*
              * Rotation 90deg CW:
@@ -1142,7 +1137,7 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
             x = RESOLUTION_Y - raw_y;
             y = raw_x;
         }
-        else if (config->rotate_cw == 2)
+        else if (coordinate_valid && config->rotate_cw == 2)
         {
             /*
              * Rotation 180deg CW:
@@ -1152,7 +1147,7 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
             x = RESOLUTION_X - raw_x;
             y = RESOLUTION_Y - raw_y;
         }
-        else if (config->rotate_cw == 3)
+        else if (coordinate_valid && config->rotate_cw == 3)
         {
             /*
              * Rotation 270deg CW:
@@ -1176,77 +1171,81 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
         y = data->finger_1_prev_y;
     }
 
-    LOG_DBG("Fingers: %d, Gesture: %d, Mode: %s", num_fingers, gesture_event, config->report_abs ? "Abs" : "Rel");
+    LOG_DBG("Fingers: %d, Gesture: %d, Mode: %s", num_fingers, gesture_event,
+            config->report_abs ? "Abs" : "Rel");
     /* Finger 2 reporting is disabled for this hardware profile */
-    LOG_DBG("Signal: strength=%u area=%u info=%02X%02X", data->finger_1_touch_strength,
-            data->finger_1_area, data->info_flags[1], data->info_flags[0]);
-    LOG_DBG("Raw: F1(X=%d, Y=%d) | Norm: X=%d, Y=%d",
-            data->finger_1_x, data->finger_1_y, x, y);
+    LOG_DBG("Signal: strength=%u area=%u info=%02X%02X",
+            data->finger_1_touch_strength, data->finger_1_area,
+            data->info_flags[1], data->info_flags[0]);
+    LOG_DBG("Raw: F1(X=%d, Y=%d) | Norm: X=%d, Y=%d", data->finger_1_x,
+            data->finger_1_y, x, y);
 
     // Skip first frame setup for smoothing
     uint8_t skip_count = 1;
 
     /* 2. Shared coordinate filter, followed by mode-specific reporting */
     int16_t dx = 0, dy = 0, smooth_dx = 0, smooth_dy = 0;
-    if (num_fingers > 0 && data->touch_count == 0)
-    {
-        data->finger_1_filtered_x = x;
-        data->finger_1_filtered_y = y;
-        data->finger_1_median_prev_1_x = x;
-        data->finger_1_median_prev_1_y = y;
-        data->finger_1_median_prev_2_x = x;
-        data->finger_1_median_prev_2_y = y;
-    }
-    else if (num_fingers > 0)
-    {
-        iqs7211e_apply_coordinate_deadband(x, &data->finger_1_filtered_x);
-        iqs7211e_apply_coordinate_deadband(y, &data->finger_1_filtered_y);
-    }
-
     if (num_fingers > 0)
     {
-        uint16_t gated_x = data->finger_1_filtered_x;
-        uint16_t gated_y = data->finger_1_filtered_y;
-        uint16_t median_x = iqs7211e_median3(gated_x, data->finger_1_median_prev_1_x,
-                                              data->finger_1_median_prev_2_x);
-        uint16_t median_y = iqs7211e_median3(gated_y, data->finger_1_median_prev_1_y,
-                                              data->finger_1_median_prev_2_y);
+        struct iqs7211e_axis_filter_result filtered_x;
+        struct iqs7211e_axis_filter_result filtered_y;
 
-        data->finger_1_median_prev_2_x = data->finger_1_median_prev_1_x;
-        data->finger_1_median_prev_2_y = data->finger_1_median_prev_1_y;
-        data->finger_1_median_prev_1_x = gated_x;
-        data->finger_1_median_prev_1_y = gated_y;
-        data->finger_1_jitter_residual_x = (int16_t)(x - gated_x);
-        data->finger_1_jitter_residual_y = (int16_t)(y - gated_y);
-
-        LOG_DBG("Jitter: raw=(%d,%d) gated=(%d,%d) filtered=(%d,%d) residual=(%d,%d)", x, y,
-                gated_x, gated_y, median_x, median_y, data->finger_1_jitter_residual_x,
-                data->finger_1_jitter_residual_y);
-        x = median_x;
-        y = median_y;
-
-        if (data->touch_count > 0)
+        if (data->touch_count == 0)
         {
-            dx = (int16_t)((int32_t)x - data->finger_1_prev_x);
-            dy = (int16_t)((int32_t)y - data->finger_1_prev_y);
+            iqs7211e_axis_filter_reset(&data->finger_1_filter_x, x);
+            iqs7211e_axis_filter_reset(&data->finger_1_filter_y, y);
+            filtered_x = (struct iqs7211e_axis_filter_result){.gated = x, .filtered = x};
+            filtered_y = (struct iqs7211e_axis_filter_result){.gated = y, .filtered = y};
         }
+        else if (!coordinate_valid)
+        {
+            filtered_x = (struct iqs7211e_axis_filter_result){
+                .gated = data->finger_1_prev_x, .filtered = data->finger_1_prev_x};
+            filtered_y = (struct iqs7211e_axis_filter_result){
+                .gated = data->finger_1_prev_y, .filtered = data->finger_1_prev_y};
+        }
+        else
+        {
+            filtered_x = iqs7211e_axis_filter_apply(&data->finger_1_filter_x, x,
+                                                     config->jitter_deadband);
+            filtered_y = iqs7211e_axis_filter_apply(&data->finger_1_filter_y, y,
+                                                     config->jitter_deadband);
+        }
+
+        LOG_DBG("Jitter: raw=(%d,%d) gated=(%d,%d) filtered=(%d,%d) residual=(%d,%d)",
+                x, y, filtered_x.gated, filtered_y.gated, filtered_x.filtered,
+                filtered_y.filtered, (int16_t)(x - filtered_x.gated),
+                (int16_t)(y - filtered_y.gated));
+        x = filtered_x.filtered;
+        y = filtered_y.filtered;
+
+        LOG_DBG("Coordinate: valid=%d held=%d output=(%d,%d)",
+                coordinate_valid,
+                x == data->finger_1_prev_x && y == data->finger_1_prev_y,
+                x, y);
+
     }
 
     if (!config->report_abs)
     {
-        if (num_fingers == 0)
-        {
-            /* On release, maintain last velocity for inertia initialization */
-            dx = data->finger_1_prev_dx;
-            dy = data->finger_1_prev_dy;
-        }
-
         /*
-         * Match the Q10 absolute path's converter: difference the filtered
-         * coordinate, then average the current and previous raw deltas.
+         * Match what the absolute path's downstream converter does: difference
+         * the filtered coordinate, then average the current and previous raw
+         * deltas, so both report modes move the pointer alike.
          */
-        smooth_dx = (dx + data->finger_1_prev_dx) / 2;
-        smooth_dy = (dy + data->finger_1_prev_dy) / 2;
+        if (num_fingers > 0 && data->touch_count > 0)
+        {
+            struct iqs7211e_relative_axis_result relative_x =
+                iqs7211e_relative_axis_apply(x, data->finger_1_prev_x,
+                                             data->finger_1_prev_dx);
+            struct iqs7211e_relative_axis_result relative_y =
+                iqs7211e_relative_axis_apply(y, data->finger_1_prev_y,
+                                             data->finger_1_prev_dy);
+            dx = relative_x.delta;
+            dy = relative_y.delta;
+            smooth_dx = relative_x.smoothed;
+            smooth_dy = relative_y.smoothed;
+        }
         LOG_DBG("Relative: delta=(%d,%d) smooth=(%d,%d)", dx, dy, smooth_dx, smooth_dy);
     }
 
@@ -1335,9 +1334,11 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
 
         if (released_here)
         {
-            input_report_key(data->dev, INPUT_BTN_TOUCH, false, false, K_FOREVER);
+            input_report_key(data->dev, INPUT_BTN_TOUCH, false, !config->report_abs,
+                             K_FOREVER);
             data->last_touched_state = false;
             k_work_cancel_delayable(&data->stationary_report_work);
+            k_work_cancel_delayable(&data->touch_verify_work);
         }
 
         /* 4.2. Process Release Gestures (Taps, etc.) - Only if not scrolling */
@@ -1374,7 +1375,7 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
          * The coordinates go out only with the release they belong to. A report
          * with no fingers can arrive when the touch has already been released -
          * a tap gesture is delivered that way, and so is anything that follows a
-         * release taken by the stationary-verify path - and by then these are
+         * release taken by the touch-verify path - and by then these are
          * the last coordinates of a contact that is over. Sending them again
          * hands downstream a position with no touch behind it: a processor that
          * spends its first sample settling has already spent it on the release,
@@ -1393,12 +1394,6 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
                 input_report_abs(data->dev, INPUT_ABS_Y, y, true, K_FOREVER);
             }
         }
-        else if (released_here)
-        {
-            /* Sync OFF state with final movement deltas for inertia */
-            input_report_rel(data->dev, INPUT_REL_X, smooth_dx, false, K_FOREVER);
-            input_report_rel(data->dev, INPUT_REL_Y, smooth_dy, true, K_FOREVER);
-        }
 
         /* 4.4. Scroll Layer Cleanup (At the very end of switching) */
         if (data->is_scroll_layer_active)
@@ -1412,17 +1407,15 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
         data->touch_count = 0;
         data->finger_1_prev_dx = 0;
         data->finger_1_prev_dy = 0;
-        data->finger_1_jitter_residual_x = 0;
-        data->finger_1_jitter_residual_y = 0;
     }
 
     /*
      * 5. Common History Update
      *
-     * The velocity history only follows a real contact. On the no-fingers path
-     * dx and dy were loaded from this same history to carry the last velocity
-     * into the release report, so writing them back here would undo the clear
-     * the release just did and leave the pre-lift velocity standing for good.
+     * The velocity history only follows a real contact. A release synchronizes
+     * BTN_TOUCH but emits no new relative movement, matching the absolute path
+     * whose post-release coordinates only close the report and re-seed the
+     * downstream converter.
      */
     data->finger_1_prev_x = x;
     data->finger_1_prev_y = y;
@@ -1432,17 +1425,24 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
         data->finger_1_prev_dy = dy;
     }
 
-    if (config->stationary_report_interval_ms > 0)
+    if (iqs7211e_stationary_chain_alive(data))
     {
-        if (num_fingers > 0 && iqs7211e_stationary_chain_alive(data))
-        {
-            data->stationary_last_verify_uptime_ms = k_uptime_get_32();
-            k_work_reschedule(&data->stationary_report_work, K_MSEC(config->stationary_report_interval_ms));
-        }
-        else
-        {
-            k_work_cancel_delayable(&data->stationary_report_work);
-        }
+        k_work_reschedule(&data->stationary_report_work,
+                          K_MSEC(config->stationary_report_interval_ms));
+    }
+    else
+    {
+        k_work_cancel_delayable(&data->stationary_report_work);
+    }
+
+    if (iqs7211e_touch_verify_chain_alive(data))
+    {
+        k_work_reschedule(&data->touch_verify_work,
+                          K_MSEC(config->touch_verify_interval_ms));
+    }
+    else
+    {
+        k_work_cancel_delayable(&data->touch_verify_work);
     }
 
     return 0;
@@ -1514,12 +1514,9 @@ static int iqs7211e_init(const struct device *dev)
     }
     data->init_state = IQS7211E_INIT_VERIFY_PRODUCT;
     data->touch_count = 0;
-    data->finger_1_jitter_residual_x = 0;
-    data->finger_1_jitter_residual_y = 0;
     data->is_scroll_layer_active = false;
     data->last_touched_state = false;
-    data->stationary_verify_pending = false;
-    data->stationary_last_verify_uptime_ms = 0;
+    data->touch_verify_pending = false;
     data->diagnostic_irq_count = 0;
     data->diagnostic_work_count = 0;
     data->diagnostic_report_count = 0;
@@ -1531,6 +1528,7 @@ static int iqs7211e_init(const struct device *dev)
 
     k_work_init(&data->work, iqs7211e_work_handler);
     k_work_init_delayable(&data->stationary_report_work, iqs7211e_stationary_report_work_handler);
+    k_work_init_delayable(&data->touch_verify_work, iqs7211e_touch_verify_work_handler);
     k_work_init_delayable(&data->click_work, iqs7211e_click_work_handler);
     data->click_edges = 0;
     ret = set_gpio_interrupt(data->dev, true);
@@ -1547,7 +1545,6 @@ static int iqs7211e_init(const struct device *dev)
 static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action action)
 {
     struct iqs7211e_data *data = dev->data;
-    const struct iqs7211e_config *config = dev->config;
     int ret;
 
     switch (action)
@@ -1562,6 +1559,8 @@ static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action ac
             return ret;
         }
 
+        k_work_cancel_delayable_sync(&data->touch_verify_work,
+                                     &data->touch_verify_work_sync);
         k_work_cancel_sync(&data->work, &data->work_sync);
         /* A running handler may have re-enabled the IRQ before it completed. */
         ret = set_gpio_interrupt(dev, false);
@@ -1580,16 +1579,9 @@ static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action ac
         data->click_edges = 0;
         k_work_cancel_delayable_sync(&data->stationary_report_work, &data->stationary_report_work_sync);
 
-        bool touch_was_active = data->last_touched_state;
-        iqs7211e_stationary_report_release_touch(data);
-        if (touch_was_active && !config->report_abs)
-        {
-            /* Flush the queued BTN_TOUCH release in relative mode. */
-            input_report_rel(dev, INPUT_REL_X, 0, true, K_FOREVER);
-        }
+        iqs7211e_release_touch(data);
 
-        data->stationary_verify_pending = false;
-        data->stationary_last_verify_uptime_ms = 0;
+        data->touch_verify_pending = false;
 
         if (data->init_state != IQS7211E_INIT_NONE)
         {
@@ -1645,12 +1637,9 @@ static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action ac
         data->init_state = IQS7211E_INIT_VERIFY_PRODUCT;
         data->reset_called = false;
         data->touch_count = 0;
-        data->finger_1_jitter_residual_x = 0;
-        data->finger_1_jitter_residual_y = 0;
         data->is_scroll_layer_active = false;
         data->last_touched_state = false;
-        data->stationary_verify_pending = false;
-        data->stationary_last_verify_uptime_ms = 0;
+        data->touch_verify_pending = false;
         data->click_edges = 0;
         atomic_clear(&data->suspended);
         LOG_DBG("IQS7211E device resumed ");
@@ -1702,13 +1691,16 @@ BUILD_ASSERT(RESOLUTION_Y == ((Y_RESOLUTION_1 << 8) | Y_RESOLUTION_0),
     BUILD_ASSERT(DT_INST_PROP_OR(inst, scroll_start, 40) >= 0 &&                                \
                      DT_INST_PROP_OR(inst, scroll_start, 40) <= RESOLUTION_X,                    \
                  "scroll-start must be within the coordinate range");                          \
+    BUILD_ASSERT(DT_INST_PROP_OR(inst, jitter_deadband, 8) >= 0 &&                              \
+                     DT_INST_PROP_OR(inst, jitter_deadband, 8) <= RESOLUTION_X,                 \
+                 "jitter-deadband must be within the coordinate range");                      \
     BUILD_ASSERT(DT_INST_PROP_OR(inst, stationary_report_interval_ms, 0) >= 0 &&                 \
                      DT_INST_PROP_OR(inst, stationary_report_interval_ms, 0) <= UINT16_MAX,      \
                  "stationary-report-interval-ms must fit in uint16_t");                         \
-    BUILD_ASSERT(DT_INST_PROP_OR(inst, stationary_touch_verify_interval_ms, 120) >= 0 &&         \
-                     DT_INST_PROP_OR(inst, stationary_touch_verify_interval_ms, 120) <=          \
+    BUILD_ASSERT(DT_INST_PROP_OR(inst, touch_verify_interval_ms, 120) >= 0 &&                    \
+                     DT_INST_PROP_OR(inst, touch_verify_interval_ms, 120) <=                     \
                          UINT16_MAX,                                                             \
-                 "stationary-touch-verify-interval-ms must fit in uint16_t")
+                 "touch-verify-interval-ms must fit in uint16_t")
 
 #define IQS7211E_DEFINE(inst)                                                                   \
     IQS7211E_VALIDATE(inst);                                                                    \
@@ -1729,12 +1721,13 @@ BUILD_ASSERT(RESOLUTION_Y == ((Y_RESOLUTION_1 << 8) | Y_RESOLUTION_0),
         .stationary_report_layers = COND_CODE_1(                                                \
             DT_INST_NODE_HAS_PROP(inst, stationary_report_layers),                               \
             (iqs7211e_stationary_report_layers_##inst), (NULL)),                                 \
+        .jitter_deadband = DT_INST_PROP_OR(inst, jitter_deadband, 8),                            \
         .stationary_report_layer_count = DT_INST_PROP_LEN_OR(inst, stationary_report_layers, 0), \
         .rotate_cw = DT_INST_PROP_OR(inst, rotate_cw, 0),                                       \
         .report_abs = DT_INST_PROP(inst, report_abs),                                           \
         .stationary_report_interval_ms = DT_INST_PROP_OR(inst, stationary_report_interval_ms, 0),\
-        .stationary_touch_verify_interval_ms =                                                   \
-            DT_INST_PROP_OR(inst, stationary_touch_verify_interval_ms, 120),                     \
+        .touch_verify_interval_ms =                                                              \
+            DT_INST_PROP_OR(inst, touch_verify_interval_ms, 120),                                \
     };                                                                                          \
     PM_DEVICE_DT_INST_DEFINE(inst, iqs7211e_pm_action);            \
     DEVICE_DT_INST_DEFINE(inst,                                    \

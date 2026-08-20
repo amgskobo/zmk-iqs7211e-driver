@@ -66,6 +66,17 @@ properties:
     type: boolean
     description: |
       If true, report absolute coordinates instead of relative ones.
+  jitter-deadband:
+    type: int
+    default: 8
+    description: |
+      Maximum per-axis coordinate distance held by the rubber-band jitter gate
+      before motion is reported. This is applied independently to X and Y, not
+      as a Euclidean radius. The three-sample median filter remains active when
+      this is 0. The default of 8 is a conservative starting point for the
+      Trackpad01 panel; override it from the board overlay when measurements
+      show a different stationary-jitter/fine-motion boundary. The normalized
+      coordinate range is 0-1024 inclusive.
   stationary-report-interval-ms:
     type: int
     default: 0
@@ -73,7 +84,8 @@ properties:
       When report-abs is enabled, resend the last absolute coordinate report
       at this interval while touch remains active. This keeps downstream
       joystick-style processors moving smoothly during stationary touches in
-      IQS7211E Event Mode. Set to 0 to disable.
+      IQS7211E Event Mode. This property has no effect in relative-report mode.
+      Set to 0 to disable.
   stationary-report-layers:
     type: array
     description: |
@@ -88,11 +100,22 @@ properties:
       one holding the chain while a higher layer sits above it. Asking only
       about the top would withhold the resends that chain relies on and stop a
       stationary contact dead.
-  stationary-touch-verify-interval-ms:
+
+      Values are layer numbers, not a bit mask: <1> means layer 1 only, while
+      <0 1> means layers 0 and 1. This property only controls periodic resends;
+      it does not enable or tune coordinate filtering or touch verification on
+      those layers. It has no effect unless report-abs and
+      stationary-report-interval-ms are enabled.
+  touch-verify-interval-ms:
     type: int
     default: 120
     description: |
-      While stationary resends are active, run a full report read at this interval to
-      verify that a touch is still present. If the read fails or no fingers are
-      present, stop stationary resends and report touch release. Set to 0 to
-      disable this fail-safe check.
+      While a touch remains active, run a full report read at this interval to
+      verify that the physical touch is still present. This applies equally to
+      absolute and relative reporting so both modes observe the same stationary
+      samples, release timing, and velocity decay. Verification is independent
+      of stationary-report-interval-ms and stationary-report-layers: resend
+      settings select downstream processor traffic, while this fail-safe checks
+      sensor liveness. If the read fails or no fingers are present, report touch
+      release and stop any pending resends. Set to 0 to disable host verification
+      and retain the sensor's 60-second Idle-Touch fallback.

@@ -32,9 +32,10 @@ The driver also implements touch gesture and scroll slider features:
 | `scroll-trigger-layers` | array | any | Highest active layers that may activate the scroll layer. If omitted, any layer may trigger it. |
 | `rotate-cw` | uint | 0 | **CW Rotation angle to match physical placement** (0=0°, 1=90°, 2=180°, 3=270°). Coordinates and scroll area are normalized internally. |
 | `report-abs` | boolean | false | If true, report absolute coordinates instead of relative ones. |
-| `stationary-report-interval-ms` | int | 0 | When `report-abs` is enabled, resend the last absolute coordinate report at this interval while touch remains active. Set to 0 to disable. |
-| `stationary-report-layers` | array | any | Layers on which stationary absolute resends are allowed. Any listed layer being active is enough, even with another layer above it. If omitted, resends are allowed on any layer. |
-| `stationary-touch-verify-interval-ms` | int | 120 | While stationary resends are active, run a full report read at this interval to verify that touch is still present. Set to 0 to disable the fail-safe check. |
+| `jitter-deadband` | int | 8 | Per-axis coordinate distance held by the rubber-band jitter gate. X and Y are gated independently, not by Euclidean distance. 0 disables the gate and keeps the three-sample median filter. The default is a conservative Trackpad01 starting point; override it after measuring another panel. Valid range: 0-1024. |
+| `stationary-report-interval-ms` | int | 0 | Absolute mode only. With `report-abs`, resend the last absolute coordinate report at this interval while touch remains active. Ignored in relative mode; set to 0 to disable. |
+| `stationary-report-layers` | array | any | Absolute mode only. Layers on which stationary absolute resends are allowed. Any listed layer being active is enough, even with another layer above it. If omitted, resends are allowed on any layer. This does not gate touch verification. |
+| `touch-verify-interval-ms` | int | 120 | In both report modes, independently run a full report read at this interval while touch remains active. This keeps release recovery and stationary velocity decay equal between absolute and relative reporting. It does not require stationary resends and is not layer-gated. Set to 0 to use the sensor's 60-second fallback instead. |
 
 ### 2.1 Absolute Pointer Report Mode
 
@@ -42,7 +43,18 @@ By default, this driver reports relative coordinates (`INPUT_REL_X`, `INPUT_REL_
 This is useful when combined with ZMK input processors that expect absolute data, such as a digitizer-to-mouse converter.
 The absolute coordinates are reported in the range of 0 to 1024 (as defined by the chip's resolution).
 
-### 2.2 Stationary Absolute Resend
+Both absolute and relative reporting use the same stateful coordinate filter: a configurable
+rubber-band deadband followed by a three-sample median. The driver relies on the sensor's
+on-chip MAV and Dynamic IIR rather than applying a second IIR on the host. All filter state is
+reset at the start of every contact, and a temporarily invalid coordinate holds the previous
+output without advancing the filter. The fixed 22 mm Trackpad01 default is deadband 8; a board
+only needs an override when its measurements call for it.
+
+### 2.2 Stationary Absolute Resend and Touch Verification
+
+Stationary resend is available only in absolute-report mode. It requires `report-abs;` and a
+non-zero `stationary-report-interval-ms`. Relative mode ignores the resend interval and resend
+layers, but touch verification remains active in both modes.
 
 In IQS7211E Event Mode, the sensor may stop generating new events while a finger is held still. If `report-abs` feeds a joystick-style or padstick-style input processor, this can make the downstream processor stop moving even though touch is still active.
 
@@ -50,11 +62,15 @@ In IQS7211E Event Mode, the sensor may stop generating new events while a finger
 
 `stationary-report-layers` limits the resend to specific layers. This is useful when absolute coordinates feed different processors on different layers. For example, a padstick layer can receive stationary resends, while scroll or matrix layers can avoid them.
 
+The array contains layer numbers, not a bit mask: `<1>` means layer 1 only, and `<0 1>` means layers 0 and 1. This setting controls only periodic resends. It does not enable or change the coordinate filter on those layers.
+
 A resend is allowed whenever any listed layer is active, whether or not another layer sits above it - deliberately not the highest-active-layer test `scroll-trigger-layers` uses. ZMK chooses a processor chain per event from the layer active at that moment, and by the first listener entry that matches rather than by the highest layer, so a listed layer can be the one holding the chain while a higher layer sits above it. Asking only about the top would withhold the resends that chain relies on and stop a stationary contact dead.
 
-`stationary-touch-verify-interval-ms` periodically checks that the touch is still there while stationary resends are running. If the read fails or the sensor reports no fingers, the driver releases touch and stops resending stale coordinates. The default is 120 ms; set it to 0 only if this fail-safe is not wanted.
+`touch-verify-interval-ms` independently checks that the physical touch is still there in both report modes. It does not depend on `stationary-report-interval-ms` and is not gated by `stationary-report-layers`, because resend routing belongs to downstream processors while touch liveness belongs to the sensor driver. Giving both modes the same verify samples also makes stationary velocity decay and release-time inertia agree. If the read fails or the sensor reports no fingers, the driver releases touch and stops any stale coordinate resend. The default is 120 ms; set it to 0 only if the sensor's slower fallback is preferred.
 
 The check is a full report read, not a bare `INFO_FLAGS` poll. A partial read followed by a STOP would close a communication window that had been opened for a gesture or coordinate event and lose it, so the verify goes through the normal report path with the interrupt masked. A verify tick can therefore also emit coordinates and dispatch clicks, exactly as an ordinary report does.
+
+When host verification is active, the driver programs the chip's Idle-Touch timeout to 0 so the chip cannot reseed underneath a touch the host still owns. When the verify interval is 0, the chip's 60-second timeout remains enabled as the stuck-touch fallback in either report mode.
 
 Example:
 
@@ -62,10 +78,10 @@ Example:
 report-abs;
 stationary-report-interval-ms = <20>;
 stationary-report-layers = <1>;
-stationary-touch-verify-interval-ms = <120>;
+touch-verify-interval-ms = <120>;
 ```
 
-In this example, stationary resends run every 20 ms whenever layer 1 is active, and touch presence is verified every 120 ms.
+In this example, stationary resends run every 20 ms whenever layer 1 is active. Touch presence is verified every 120 ms on every layer, including while layer 1 is inactive.
 
 ### 2.3 Scroll Layer Trigger Control
 
@@ -84,6 +100,19 @@ scroll-trigger-layers = <0>;
 In this example, layer 6 is used as the scroll layer, but it can only be triggered from layer 0. This is useful when another layer, such as a padstick or mouse-only layer, should keep the full pad area available without the right edge entering the scroll layer.
 
 If `scroll-trigger-layers` is omitted, the driver keeps the previous behavior and allows any layer to trigger `scroll-layer`.
+
+### 2.4 Filter Tests
+
+The standalone filter tests cover deadband behavior, spike rejection, contact reset, invalid
+frames, stationary velocity decay, and absolute/relative parity. The parity scenario derives
+each expected relative delta independently from the absolute filtered coordinate stream:
+
+```sh
+sh tests/filter/run.sh
+```
+
+Implementation and maintenance notes for the coordinate pipeline are included in the
+[Japanese README](README_JA.md#5-座標パイプライン).
 
 ## 3. Installation (GitHub Actions)
 
@@ -163,9 +192,10 @@ Add the IQS7211E node in your keyboard DTS overlay file (example of XIAO_BLE boa
         // scroll-trigger-layers = <0>; // optional: only these highest active layers may enter scroll mode
         rotate-cw = <0>;
         // report-abs; // Use absolute coordinates (0-1024 inclusive)
+        // The following absolute-only options require report-abs.
         // stationary-report-interval-ms = <20>; // optional: resend stationary ABS reports
         // stationary-report-layers = <1>; // optional: resend only while one of these layers is active
-        // stationary-touch-verify-interval-ms = <120>; // optional: verify touch during resends
+        // touch-verify-interval-ms = <120>; // optional: layer-independent touch verify
     };
 };
 
