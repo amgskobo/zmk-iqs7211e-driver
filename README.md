@@ -43,6 +43,14 @@ By default, this driver reports relative coordinates (`INPUT_REL_X`, `INPUT_REL_
 This is useful when combined with ZMK input processors that expect absolute data, such as a digitizer-to-mouse converter.
 The absolute coordinates are reported in the range of 0 to 1024 (as defined by the chip's resolution).
 
+Direct relative reporting does not emit `INPUT_BTN_TOUCH`: ZMK maps that code
+to mouse button 0, which would otherwise turn every contact into a left-button
+drag. Absolute mode does emit the contact edges because absolute-coordinate
+processors use them to delimit a contact. Such a processor must consume or
+suppress `INPUT_BTN_TOUCH` before it reaches ZMK's mouse output; for example,
+use `suppress-btn-touch` with an absolute-to-relative processor. Tap gestures
+remain ordinary `INPUT_BTN_*` click reports in both modes.
+
 Both absolute and relative reporting use the same stateful coordinate filter: a configurable
 rubber-band deadband followed by a three-sample median. The driver relies on the sensor's
 on-chip MAV and Dynamic IIR rather than applying a second IIR on the host. All filter state is
@@ -67,6 +75,13 @@ The array contains layer numbers, not a bit mask: `<1>` means layer 1 only, and 
 A resend is allowed whenever any listed layer is active, whether or not another layer sits above it - deliberately not the highest-active-layer test `scroll-trigger-layers` uses. ZMK chooses a processor chain per event from the layer active at that moment, and by the first listener entry that matches rather than by the highest layer, so a listed layer can be the one holding the chain while a higher layer sits above it. Asking only about the top would withhold the resends that chain relies on and stop a stationary contact dead.
 
 `touch-verify-interval-ms` independently checks that the physical touch is still there in both report modes. It does not depend on `stationary-report-interval-ms` and is not gated by `stationary-report-layers`, because resend routing belongs to downstream processors while touch liveness belongs to the sensor driver. Giving both modes the same verify samples also makes stationary velocity decay and release-time inertia agree. If the read fails or the sensor reports no fingers, the driver releases touch and stops any stale coordinate resend. The default is 120 ms; set it to 0 only if the sensor's slower fallback is preferred.
+
+Every full report also checks the sensor's `Show Reset` flag. If the IQS7211E
+watchdog or a sensor-only power interruption resets the part after start-up,
+the driver first releases any active click, touch, and automatic scroll layer,
+then restores the application settings, acknowledges the reset, runs ATI, and
+re-enables Event Mode. No coordinates or gestures from the reset packet are
+forwarded.
 
 The check is a full report read, not a bare `INFO_FLAGS` poll. A partial read followed by a STOP would close a communication window that had been opened for a gesture or coordinate event and lose it, so the verify goes through the normal report path with the interrupt masked. A verify tick can therefore also emit coordinates and dispatch clicks, exactly as an ordinary report does.
 
@@ -103,9 +118,10 @@ If `scroll-trigger-layers` is omitted, the driver keeps the previous behavior an
 
 ### 2.4 Filter Tests
 
-The standalone filter tests cover deadband behavior, spike rejection, contact reset, invalid
-frames, stationary velocity decay, and absolute/relative parity. The parity scenario derives
-each expected relative delta independently from the absolute filtered coordinate stream:
+The standalone host tests cover deadband behavior, spike rejection, contact reset, invalid
+frames, stationary velocity decay, absolute/relative coordinate parity, runtime reset flag
+detection, and the mode-specific `INPUT_BTN_TOUCH` policy. The parity scenario derives each
+expected relative delta independently from the absolute filtered coordinate stream:
 
 ```sh
 sh tests/filter/run.sh
