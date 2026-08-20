@@ -218,6 +218,17 @@ CONFIG_ZMK_POINTING=y
 CONFIG_IQS7211E=y
 ```
 
+ドライバーは、すべての IQS7211E instance で1つの専用 work queue を共有します。センサー報告、クリックの press/release、静止中の再送、touch verify、suspend 時の release はすべてこの queue 上で順番に処理します。Zephyr の非同期 input backend は system work queue からの報告を non-blocking に変更するため、input queue が満杯になると release を落とす可能性があります。専用 queue では `K_FOREVER` の待機が有効なままになり、input thread が queue を空けるまで待つため、press/release の順序を保持できます。
+
+通常は次の production 既定値のままで使用します。
+
+```kconfig
+CONFIG_IQS7211E_WORKQUEUE_STACK_SIZE=1536
+CONFIG_IQS7211E_WORKQUEUE_PRIORITY=-1
+```
+
+スタックを実測する診断 firmware では `CONFIG_IQS7211E_WORKQUEUE_STACK_USAGE=y` を有効にします。peak 使用量が増えるたびに high-water mark をログへ出します。移動、連続 tap、静止中の touch verify、suspend/resume を一通り実行してから stack size を減らしてください。この診断設定は既定では無効です。
+
 ### 3.4 ファームウェアのビルド
 
 変更を GitHub リポジトリにプッシュします。

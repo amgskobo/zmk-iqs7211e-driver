@@ -22,6 +22,23 @@ LOG_MODULE_REGISTER(iqs7211e, CONFIG_ZMK_LOG_LEVEL);
 /* Spacing between the press and release edges of a generated click. */
 #define IQS7211E_CLICK_EDGE_MS 20
 
+/*
+ * Zephyr's asynchronous input backend changes K_FOREVER to K_NO_WAIT when an
+ * input report originates on the system work queue. A full input message
+ * queue can therefore drop a release event. Keep every driver-owned producer
+ * on one private queue: K_FOREVER can then block until the input thread drains
+ * the queue, preserving report order and press/release pairing.
+ */
+K_THREAD_STACK_DEFINE(iqs7211e_work_queue_stack,
+                      CONFIG_IQS7211E_WORKQUEUE_STACK_SIZE);
+static struct k_work_q iqs7211e_work_queue;
+static bool iqs7211e_work_queue_started;
+
+#ifdef CONFIG_IQS7211E_WORKQUEUE_STACK_USAGE
+static size_t iqs7211e_work_queue_min_unused =
+    K_THREAD_STACK_SIZEOF(iqs7211e_work_queue_stack);
+#endif
+
 static enum iqs7211e_gestures_event iqs7211e_get_touchpad_event(const struct iqs7211e_data *data);
 static bool iqs7211e_init_state(struct iqs7211e_data *data);
 static int iqs7211e_get_product_num(struct iqs7211e_data *data);
@@ -35,6 +52,10 @@ static void iqs7211e_work_handler(struct k_work *work);
 static void iqs7211e_stationary_report_work_handler(struct k_work *work);
 static void iqs7211e_touch_verify_work_handler(struct k_work *work);
 static void iqs7211e_click_work_handler(struct k_work *work);
+#ifdef CONFIG_PM_DEVICE
+static void iqs7211e_pm_release_work_handler(struct k_work *work);
+#endif
+static int iqs7211e_release_click(struct iqs7211e_data *data);
 static void iqs7211e_queue_clicks(struct iqs7211e_data *data, uint16_t button, uint8_t clicks);
 static int iqs7211e_report_data(struct iqs7211e_data *data);
 static void iqs7211e_gpio_callback(const struct device *port, struct gpio_callback *cb, gpio_port_pins_t pins);
@@ -51,12 +72,79 @@ static bool iqs7211e_scroll_trigger_layer_allowed(const struct iqs7211e_config *
 static bool iqs7211e_stationary_report_layer_allowed(const struct iqs7211e_config *config);
 static bool iqs7211e_stationary_chain_alive(const struct iqs7211e_data *data);
 static bool iqs7211e_touch_verify_chain_alive(const struct iqs7211e_data *data);
-static void iqs7211e_release_touch(struct iqs7211e_data *data);
+static int iqs7211e_release_touch(struct iqs7211e_data *data);
 static uint8_t iqs7211e_get_bit(uint8_t byte, uint8_t pos);
 static uint8_t iqs7211e_get_num_fingers_from_info_flags(const uint8_t *info_flags);
 static uint8_t iqs7211e_get_num_fingers(const struct iqs7211e_data *data);
 static int set_gpio_interrupt(const struct device *dev, const bool en);
 static int iqs7211e_init(const struct device *dev);
+
+static void iqs7211e_start_work_queue(void)
+{
+    if (iqs7211e_work_queue_started)
+    {
+        return;
+    }
+
+    const struct k_work_queue_config queue_config = {
+        .name = "iqs7211e",
+        .no_yield = false,
+        .essential = false,
+    };
+
+    k_work_queue_init(&iqs7211e_work_queue);
+    k_work_queue_start(&iqs7211e_work_queue, iqs7211e_work_queue_stack,
+                       K_THREAD_STACK_SIZEOF(iqs7211e_work_queue_stack),
+                       CONFIG_IQS7211E_WORKQUEUE_PRIORITY, &queue_config);
+
+    /* Device initializers run serially, so one module-wide queue is enough
+     * even when a board declares more than one IQS7211E instance. */
+    iqs7211e_work_queue_started = true;
+}
+
+static int iqs7211e_submit_work(struct k_work *work)
+{
+    int ret = k_work_submit_to_queue(&iqs7211e_work_queue, work);
+
+    if (ret < 0)
+    {
+        LOG_ERR("Failed to submit driver work: %d", ret);
+    }
+    return ret;
+}
+
+static int iqs7211e_reschedule_work(struct k_work_delayable *work,
+                                    k_timeout_t delay)
+{
+    int ret = k_work_reschedule_for_queue(&iqs7211e_work_queue, work, delay);
+
+    if (ret < 0)
+    {
+        LOG_ERR("Failed to reschedule driver work: %d", ret);
+    }
+    return ret;
+}
+
+static void iqs7211e_note_work_queue_stack_usage(void)
+{
+#ifdef CONFIG_IQS7211E_WORKQUEUE_STACK_USAGE
+    size_t unused;
+    int ret = k_thread_stack_space_get(
+        k_work_queue_thread_get(&iqs7211e_work_queue), &unused);
+
+    if (ret == 0 && unused < iqs7211e_work_queue_min_unused)
+    {
+        iqs7211e_work_queue_min_unused = unused;
+        LOG_INF("work queue stack high-water mark: %zu/%zu bytes",
+                K_THREAD_STACK_SIZEOF(iqs7211e_work_queue_stack) - unused,
+                K_THREAD_STACK_SIZEOF(iqs7211e_work_queue_stack));
+    }
+    else if (ret < 0)
+    {
+        LOG_WRN("Failed to measure work queue stack: %d", ret);
+    }
+#endif
+}
 
 static bool iqs7211e_init_state(struct iqs7211e_data *data)
 {
@@ -572,9 +660,10 @@ static uint8_t iqs7211e_get_num_fingers(const struct iqs7211e_data *data)
     return iqs7211e_get_num_fingers_from_info_flags(data->info_flags);
 }
 
-static void iqs7211e_release_touch(struct iqs7211e_data *data)
+static int iqs7211e_release_touch(struct iqs7211e_data *data)
 {
     const struct iqs7211e_config *config = data->dev->config;
+    int ret;
 
     k_work_cancel_delayable(&data->stationary_report_work);
     k_work_cancel_delayable(&data->touch_verify_work);
@@ -593,15 +682,34 @@ static void iqs7211e_release_touch(struct iqs7211e_data *data)
      */
     if (data->last_touched_state)
     {
-        input_report_key(data->dev, INPUT_BTN_TOUCH, false, !config->report_abs,
-                         K_FOREVER);
-        data->last_touched_state = false;
+        ret = input_report_key(data->dev, INPUT_BTN_TOUCH, false,
+                               !config->report_abs, K_FOREVER);
+        if (ret < 0)
+        {
+            LOG_ERR("Failed to release touch: %d", ret);
+            return ret;
+        }
 
         if (config->report_abs)
         {
-            input_report_abs(data->dev, INPUT_ABS_X, data->finger_1_prev_x, false, K_FOREVER);
-            input_report_abs(data->dev, INPUT_ABS_Y, data->finger_1_prev_y, true, K_FOREVER);
+            ret = input_report_abs(data->dev, INPUT_ABS_X,
+                                   data->finger_1_prev_x, false, K_FOREVER);
+            if (ret < 0)
+            {
+                LOG_ERR("Failed to report release X coordinate: %d", ret);
+                return ret;
+            }
+
+            ret = input_report_abs(data->dev, INPUT_ABS_Y,
+                                   data->finger_1_prev_y, true, K_FOREVER);
+            if (ret < 0)
+            {
+                LOG_ERR("Failed to report release Y coordinate: %d", ret);
+                return ret;
+            }
         }
+
+        data->last_touched_state = false;
     }
 
     if (data->is_scroll_layer_active && config->scroll_layer >= 0)
@@ -614,6 +722,8 @@ static void iqs7211e_release_touch(struct iqs7211e_data *data)
     data->touch_count = 0;
     data->finger_1_prev_dx = 0;
     data->finger_1_prev_dy = 0;
+
+    return 0;
 }
 
 static int iqs7211e_write_defaults(struct iqs7211e_data *data)
@@ -968,13 +1078,15 @@ static void iqs7211e_work_handler(struct k_work *work)
     {
         LOG_ERR("Failed to re-enable IQS7211E interrupt");
     }
+
+    iqs7211e_note_work_queue_stack_usage();
 }
 
 /*
  * Emit one press or release edge, then reschedule until the requested number of
- * clicks has been played out. This runs on the system workqueue like the rest
- * of the driver, but yields between edges instead of sleeping, so a triple tap
- * no longer holds the queue for 120ms.
+ * clicks has been played out. It runs on the driver queue and yields between
+ * edges instead of sleeping, so a triple tap does not hold the queue for
+ * 120ms.
  */
 static void iqs7211e_click_work_handler(struct k_work *work)
 {
@@ -988,13 +1100,51 @@ static void iqs7211e_click_work_handler(struct k_work *work)
 
     /* An even number of edges left means the next one opens a click. */
     bool press = (data->click_edges % 2) == 0;
-    input_report_key(data->dev, data->click_button, press, true, K_FOREVER);
+    int ret = input_report_key(data->dev, data->click_button, press, true,
+                               K_FOREVER);
+    if (ret < 0)
+    {
+        LOG_ERR("Failed to report click edge: %d", ret);
+        if (iqs7211e_reschedule_work(
+                &data->click_work, K_MSEC(IQS7211E_CLICK_EDGE_MS)) < 0)
+        {
+            iqs7211e_release_click(data);
+        }
+        iqs7211e_note_work_queue_stack_usage();
+        return;
+    }
+
     data->click_edges--;
 
     if (data->click_edges > 0)
     {
-        k_work_reschedule(&data->click_work, K_MSEC(IQS7211E_CLICK_EDGE_MS));
+        ret = iqs7211e_reschedule_work(&data->click_work,
+                                       K_MSEC(IQS7211E_CLICK_EDGE_MS));
+        if (ret < 0)
+        {
+            /* A failed reschedule after a press must not strand the press. */
+            iqs7211e_release_click(data);
+        }
     }
+
+    iqs7211e_note_work_queue_stack_usage();
+}
+
+static int iqs7211e_release_click(struct iqs7211e_data *data)
+{
+    if ((data->click_edges % 2) == 1)
+    {
+        int ret = input_report_key(data->dev, data->click_button, false, true,
+                                   K_FOREVER);
+        if (ret < 0)
+        {
+            LOG_ERR("Failed to release click: %d", ret);
+            return ret;
+        }
+    }
+
+    data->click_edges = 0;
+    return 0;
 }
 
 /*
@@ -1011,17 +1161,18 @@ static void iqs7211e_queue_clicks(struct iqs7211e_data *data, uint16_t button, u
 
     if (data->click_edges > 0)
     {
-        /* Mid-sequence: an odd count means a press is currently outstanding. */
-        if ((data->click_edges % 2) == 1)
+        if (iqs7211e_release_click(data) < 0)
         {
-            input_report_key(data->dev, data->click_button, false, true, K_FOREVER);
+            return;
         }
-        data->click_edges = 0;
     }
 
     data->click_button = button;
     data->click_edges = clicks * 2;
-    k_work_reschedule(&data->click_work, K_NO_WAIT);
+    if (iqs7211e_reschedule_work(&data->click_work, K_NO_WAIT) < 0)
+    {
+        data->click_edges = 0;
+    }
 }
 
 static void iqs7211e_stationary_report_work_handler(struct k_work *work)
@@ -1038,18 +1189,25 @@ static void iqs7211e_stationary_report_work_handler(struct k_work *work)
     if (!iqs7211e_stationary_report_layer_allowed(config))
     {
         /* Not this layer's business - skip the resend, keep the chain alive. */
-        k_work_reschedule(&data->stationary_report_work,
-                          K_MSEC(config->stationary_report_interval_ms));
+        iqs7211e_reschedule_work(
+            &data->stationary_report_work,
+            K_MSEC(config->stationary_report_interval_ms));
         return;
     }
 
-    input_report_abs(data->dev, INPUT_ABS_X, data->finger_1_prev_x, false, K_FOREVER);
-    input_report_abs(data->dev, INPUT_ABS_Y, data->finger_1_prev_y, true, K_FOREVER);
+    input_report_abs(data->dev, INPUT_ABS_X, data->finger_1_prev_x, false,
+                     K_FOREVER);
+    input_report_abs(data->dev, INPUT_ABS_Y, data->finger_1_prev_y, true,
+                     K_FOREVER);
 
     if (iqs7211e_stationary_chain_alive(data))
     {
-        k_work_reschedule(&data->stationary_report_work, K_MSEC(config->stationary_report_interval_ms));
+        iqs7211e_reschedule_work(
+            &data->stationary_report_work,
+            K_MSEC(config->stationary_report_interval_ms));
     }
+
+    iqs7211e_note_work_queue_stack_usage();
 }
 
 static void iqs7211e_touch_verify_work_handler(struct k_work *work)
@@ -1074,7 +1232,8 @@ static void iqs7211e_touch_verify_work_handler(struct k_work *work)
      * its layer gate. It verifies the physical touch, not a processor route.
      */
     data->touch_verify_pending = true;
-    if (set_gpio_interrupt(data->dev, false) < 0 || k_work_submit(&data->work) < 0)
+    if (set_gpio_interrupt(data->dev, false) < 0 ||
+        iqs7211e_submit_work(&data->work) < 0)
     {
         data->touch_verify_pending = false;
         iqs7211e_release_touch(data);
@@ -1083,6 +1242,8 @@ static void iqs7211e_touch_verify_work_handler(struct k_work *work)
             LOG_ERR("Failed to restore IQS7211E interrupt after verify failure");
         }
     }
+
+    iqs7211e_note_work_queue_stack_usage();
 }
 
 static int iqs7211e_report_data(struct iqs7211e_data *data)
@@ -1427,8 +1588,9 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
 
     if (iqs7211e_stationary_chain_alive(data))
     {
-        k_work_reschedule(&data->stationary_report_work,
-                          K_MSEC(config->stationary_report_interval_ms));
+        iqs7211e_reschedule_work(
+            &data->stationary_report_work,
+            K_MSEC(config->stationary_report_interval_ms));
     }
     else
     {
@@ -1437,8 +1599,9 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
 
     if (iqs7211e_touch_verify_chain_alive(data))
     {
-        k_work_reschedule(&data->touch_verify_work,
-                          K_MSEC(config->touch_verify_interval_ms));
+        iqs7211e_reschedule_work(
+            &data->touch_verify_work,
+            K_MSEC(config->touch_verify_interval_ms));
     }
     else
     {
@@ -1470,7 +1633,8 @@ static void iqs7211e_gpio_callback(const struct device *port, struct gpio_callba
         return;
     }
 
-    if (set_gpio_interrupt(data->dev, false) < 0 || k_work_submit(&data->work) < 0)
+    if (set_gpio_interrupt(data->dev, false) < 0 ||
+        iqs7211e_submit_work(&data->work) < 0)
     {
         LOG_ERR("Failed to queue IQS7211E interrupt work");
         if (!atomic_get(&data->suspended))
@@ -1526,10 +1690,15 @@ static int iqs7211e_init(const struct device *dev)
     atomic_clear(&data->suspended);
     data->sensor_suspended = false;
 
+    iqs7211e_start_work_queue();
     k_work_init(&data->work, iqs7211e_work_handler);
     k_work_init_delayable(&data->stationary_report_work, iqs7211e_stationary_report_work_handler);
     k_work_init_delayable(&data->touch_verify_work, iqs7211e_touch_verify_work_handler);
     k_work_init_delayable(&data->click_work, iqs7211e_click_work_handler);
+#ifdef CONFIG_PM_DEVICE
+    k_work_init(&data->pm_release_work, iqs7211e_pm_release_work_handler);
+    data->pm_release_ret = 0;
+#endif
     data->click_edges = 0;
     ret = set_gpio_interrupt(data->dev, true);
     if (ret < 0)
@@ -1542,6 +1711,77 @@ static int iqs7211e_init(const struct device *dev)
 }
 
 #ifdef CONFIG_PM_DEVICE
+static void iqs7211e_pm_release_work_handler(struct k_work *work)
+{
+    struct iqs7211e_data *data =
+        CONTAINER_OF(work, struct iqs7211e_data, pm_release_work);
+    int first_error = 0;
+
+    int ret = iqs7211e_release_click(data);
+    if (ret < 0)
+    {
+        first_error = ret;
+    }
+
+    ret = iqs7211e_release_touch(data);
+    if (ret < 0 && first_error == 0)
+    {
+        first_error = ret;
+    }
+
+    data->pm_release_ret = first_error;
+    iqs7211e_note_work_queue_stack_usage();
+}
+
+static void iqs7211e_restore_after_failed_suspend(struct iqs7211e_data *data)
+{
+    const struct iqs7211e_config *config = data->dev->config;
+
+    data->touch_verify_pending = false;
+    atomic_clear(&data->suspended);
+
+    if (data->click_edges > 0)
+    {
+        iqs7211e_reschedule_work(&data->click_work, K_NO_WAIT);
+    }
+    if (iqs7211e_stationary_chain_alive(data))
+    {
+        iqs7211e_reschedule_work(
+            &data->stationary_report_work,
+            K_MSEC(config->stationary_report_interval_ms));
+    }
+    if (iqs7211e_touch_verify_chain_alive(data))
+    {
+        iqs7211e_reschedule_work(
+            &data->touch_verify_work,
+            K_MSEC(config->touch_verify_interval_ms));
+    }
+
+    if (set_gpio_interrupt(data->dev, true) < 0)
+    {
+        LOG_ERR("Failed to restore IRQ after rejected suspend");
+    }
+}
+
+static int iqs7211e_release_before_suspend(struct iqs7211e_data *data)
+{
+    if (k_current_get() == k_work_queue_thread_get(&iqs7211e_work_queue))
+    {
+        iqs7211e_pm_release_work_handler(&data->pm_release_work);
+        return data->pm_release_ret;
+    }
+
+    data->pm_release_ret = 0;
+    int ret = iqs7211e_submit_work(&data->pm_release_work);
+    if (ret < 0)
+    {
+        return ret;
+    }
+
+    k_work_flush(&data->pm_release_work, &data->pm_release_work_sync);
+    return data->pm_release_ret;
+}
+
 static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action action)
 {
     struct iqs7211e_data *data = dev->data;
@@ -1566,20 +1806,22 @@ static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action ac
         ret = set_gpio_interrupt(dev, false);
         if (ret < 0)
         {
-            atomic_clear(&data->suspended);
+            iqs7211e_restore_after_failed_suspend(data);
             return ret;
         }
 
         k_work_cancel_delayable_sync(&data->click_work, &data->click_work_sync);
-        if ((data->click_edges % 2) == 1)
-        {
-            /* A press was outstanding - do not suspend with the button held. */
-            input_report_key(dev, data->click_button, false, true, K_FOREVER);
-        }
-        data->click_edges = 0;
-        k_work_cancel_delayable_sync(&data->stationary_report_work, &data->stationary_report_work_sync);
+        k_work_cancel_delayable_sync(&data->stationary_report_work,
+                                     &data->stationary_report_work_sync);
 
-        iqs7211e_release_touch(data);
+        /* PM actions may run on the system queue too. Route releases through
+         * the private queue and wait so input_report() retains K_FOREVER. */
+        ret = iqs7211e_release_before_suspend(data);
+        if (ret < 0)
+        {
+            iqs7211e_restore_after_failed_suspend(data);
+            return ret;
+        }
 
         data->touch_verify_pending = false;
 

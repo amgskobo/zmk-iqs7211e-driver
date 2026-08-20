@@ -227,6 +227,25 @@ CONFIG_ZMK_POINTING=y
 CONFIG_IQS7211E=y
 ```
 
+The driver uses one private work queue for all IQS7211E instances. Sensor
+reports, generated click edges, stationary reports, touch verification, and
+suspend-time releases all run there. This is required for reliable input
+delivery: Zephyr's asynchronous input backend may make reports from the system
+work queue non-blocking, so a full input queue could otherwise drop a release.
+
+The production defaults are normally sufficient:
+
+```kconfig
+CONFIG_IQS7211E_WORKQUEUE_STACK_SIZE=1536
+CONFIG_IQS7211E_WORKQUEUE_PRIORITY=-1
+```
+
+For a diagnostic build, enable
+`CONFIG_IQS7211E_WORKQUEUE_STACK_USAGE=y`. The driver then logs a new stack
+high-water mark when peak usage increases. Measure representative movement,
+tap sequences, stationary touch verification, and suspend/resume before
+reducing the stack size. The diagnostic option is disabled by default.
+
 ### 3.4 Build Firmware
 
 Push your changes to your GitHub repository.
