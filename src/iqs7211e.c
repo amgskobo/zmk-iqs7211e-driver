@@ -31,6 +31,11 @@ LOG_MODULE_REGISTER(iqs7211e, CONFIG_ZMK_LOG_LEVEL);
 #define IQS7211E_RDY_FAST_RECHECK_LIMIT 4
 #define IQS7211E_RDY_RECHECK_BACKOFF_MS 20
 
+/* Retry a hardware wake promptly, then yield when the I2C bus stays down. */
+#define IQS7211E_RESUME_FAST_RETRY_MS 20
+#define IQS7211E_RESUME_FAST_RETRY_LIMIT 4
+#define IQS7211E_RESUME_RETRY_BACKOFF_MS 1000
+
 /*
  * Zephyr's asynchronous input backend changes K_FOREVER to K_NO_WAIT when an
  * input report originates on the system work queue. A full input message
@@ -406,6 +411,47 @@ static int iqs7211e_set_suspend_state(struct iqs7211e_data *data, bool suspend)
 
     LOG_DBG("IQS7211E hardware %s", suspend ? "suspended" : "resumed");
     return 0;
+}
+
+static k_timeout_t iqs7211e_sensor_resume_retry_delay(
+    const struct iqs7211e_data *data)
+{
+    return data->sensor_resume_attempts >= IQS7211E_RESUME_FAST_RETRY_LIMIT
+               ? K_MSEC(IQS7211E_RESUME_RETRY_BACKOFF_MS)
+               : K_MSEC(IQS7211E_RESUME_FAST_RETRY_MS);
+}
+
+static bool iqs7211e_retry_sensor_resume(struct iqs7211e_data *data)
+{
+    if (!data->sensor_suspended)
+    {
+        return true;
+    }
+
+    int ret = iqs7211e_set_suspend_state(data, false);
+    if (ret < 0)
+    {
+        if (data->sensor_resume_attempts < UINT8_MAX)
+        {
+            data->sensor_resume_attempts++;
+        }
+        if (data->sensor_resume_attempts == IQS7211E_RESUME_FAST_RETRY_LIMIT)
+        {
+            LOG_WRN("Sensor wake still failing after %u attempts; backing off",
+                    data->sensor_resume_attempts);
+        }
+
+        iqs7211e_reschedule_work(
+            &data->rdy_recheck_work,
+            iqs7211e_sensor_resume_retry_delay(data));
+        return false;
+    }
+
+    LOG_INF("Sensor wake recovered after %u failed attempt(s)",
+            data->sensor_resume_attempts);
+    data->sensor_suspended = false;
+    data->sensor_resume_attempts = 0;
+    return true;
 }
 #endif
 
@@ -1136,6 +1182,14 @@ static void iqs7211e_rdy_recheck_work_handler(struct k_work *work)
         return;
     }
 
+#ifdef CONFIG_PM_DEVICE
+    if (!iqs7211e_retry_sensor_resume(data))
+    {
+        iqs7211e_note_work_queue_stack_usage();
+        return;
+    }
+#endif
+
     int rdy_active = gpio_pin_get_dt(&config->irq_gpio);
     if (rdy_active < 0)
     {
@@ -1798,6 +1852,7 @@ static int iqs7211e_init(const struct device *dev)
     atomic_clear(&data->suspended);
     atomic_clear(&data->rdy_recheck_attempts);
     data->sensor_suspended = false;
+    data->sensor_resume_attempts = 0;
 
     iqs7211e_start_work_queue();
     k_work_init(&data->work, iqs7211e_work_handler);
@@ -1914,6 +1969,8 @@ static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action ac
                                      &data->touch_verify_work_sync);
         k_work_cancel_delayable_sync(&data->rdy_recheck_work,
                                      &data->rdy_recheck_work_sync);
+        /* The recheck handler owns this counter while the driver is awake. */
+        data->sensor_resume_attempts = 0;
         k_work_cancel_sync(&data->work, &data->work_sync);
         /* A running handler may have re-enabled the IRQ before it completed. */
         ret = set_gpio_interrupt(dev, false);
@@ -1982,10 +2039,15 @@ static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action ac
             if (ret < 0)
             {
                 LOG_WRN("Sensor may still be asleep: bus unavailable at resume (%d)", ret);
+                if (data->sensor_resume_attempts < UINT8_MAX)
+                {
+                    data->sensor_resume_attempts++;
+                }
             }
             else
             {
                 data->sensor_suspended = false;
+                data->sensor_resume_attempts = 0;
             }
         }
 

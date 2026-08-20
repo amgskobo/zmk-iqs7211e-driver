@@ -222,6 +222,8 @@ CONFIG_IQS7211E=y
 
 RDY 割り込みを再有効化した後は、少し遅らせて logical level も確認します。割り込みを mask している間に RDY が active になっていた場合は、次の edge を待たずに report work を再投入します。高速な復旧回数には上限を設け、その後は間隔を広げるため、RDY pin が異常に active のままでも work queue を占有し続けません。
 
+device PM がセンサーを wake する時点で I2C bus がまだ利用できない場合は、同じ delayed work が wake を再試行します。短間隔の再試行後は間隔を広げ、bus が復旧するまで待ちます。
+
 通常は次の production 既定値のままで使用します。
 
 ```kconfig

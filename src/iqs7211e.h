@@ -142,6 +142,7 @@ struct iqs7211e_data
     bool reset_called;
     atomic_t suspended;
     bool sensor_suspended;
+    uint8_t sensor_resume_attempts;
     bool is_scroll_layer_active;
     uint8_t gestures[2];
     uint8_t info_flags[2];
