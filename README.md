@@ -13,7 +13,8 @@ The driver also implements touch gesture and scroll slider features:
 
 - Single-tap / Double-tap / Triple-tap
 - Scroll slider (right-edge area)
-  - Activates a specified layer while touching (`scroll-layer = <1>` is generally used)
+  - Activates a dedicated, driver-owned layer while touching (for example,
+    `scroll-slider-layer = <6>`)
   - Releases to off the layer
 - Precise rotation correction (`rotate-cw`) for flexible physical placement, including automatic slider area adjustment. **Eliminates the need for manual rotation/flipping in input processors.**
 - "Ultimate Quality" Rigor: Implemented mathematical boundary fixes (Off-by-one) and safe PM (Power Management) execution guards.
@@ -27,15 +28,14 @@ The driver also implements touch gesture and scroll slider features:
 | `single-tap` | int | -1 | Button triggered by single-tap (-1=disabled, 0=BTN_0, 1=BTN_1, 2=BTN_2, ...) |
 | `double-tap` | int | -1 | Button triggered by double-tap (-1=disabled, 0=BTN_0, 1=BTN_1, 2=BTN_2, ...) |
 | `triple-tap` | int | -1 | Button triggered by triple-tap (-1=disabled, 0=BTN_0, 1=BTN_1, 2=BTN_2, ...) |
-| `scroll-layer` | int | -1 | Layer activated while first touching scroll slider area (-1=disabled, others=layer num) |
+| `scroll-slider-layer` | int | -1 | Driver-exclusive existing keymap layer ID activated while first touching the right-edge scroll slider area (-1=disabled). Do not also activate it from a key binding, macro, or other behavior. |
 | `scroll-start` | uint | 40 | Threshold/padding from right edge to activate scroll slider (resolution 0-1024 inclusive) |
-| `scroll-trigger-layers` | array | any | Highest active layers that may activate the scroll layer. If omitted, any layer may trigger it. |
+| `scroll-layers` | array | none | Existing manual-scroll layer IDs. The driver monitors them but never activates or deactivates them. Contacts visiting any listed layer suppress taps through release, including one delayed no-finger tap. |
+| `scroll-slider-trigger-layers` | array | any | Highest active layers that may activate `scroll-slider-layer`. If omitted, any layer may trigger it. |
 | `rotate-cw` | uint | 0 | **CW Rotation angle to match physical placement** (0=0°, 1=90°, 2=180°, 3=270°). Coordinates and scroll area are normalized internally. |
 | `report-abs` | boolean | false | If true, report absolute coordinates instead of relative ones. |
 | `jitter-deadband` | int | 8 | Per-axis coordinate distance held by the rubber-band jitter gate. X and Y are gated independently, not by Euclidean distance. 0 disables the gate and keeps the three-sample median filter. The default is a conservative Trackpad01 starting point; override it after measuring another panel. Valid range: 0-1024. |
-| `stationary-report-interval-ms` | int | 0 | Absolute mode only. With `report-abs`, resend the last absolute coordinate report at this interval while touch remains active. Ignored in relative mode; set to 0 to disable. |
-| `stationary-report-layers` | array | any | Absolute mode only. Layers on which stationary absolute resends are allowed. Any listed layer being active is enough, even with another layer above it. If omitted, resends are allowed on any layer. This does not gate touch verification. |
-| `touch-verify-interval-ms` | int | 120 | In both report modes, independently run a full report read at this interval while touch remains active. This keeps release recovery and stationary velocity decay equal between absolute and relative reporting. It does not require stationary resends and is not layer-gated. Set to 0 to use the sensor's 60-second fallback instead. |
+| `touch-verify-interval-ms` | int | 120 | In both report modes, independently run a full report read at this interval while touch remains active. This provides common stale-contact recovery and is not layer-gated. Set to 0 to use the sensor's 60-second fallback instead. |
 
 ### 2.1 Absolute Pointer Report Mode
 
@@ -58,23 +58,9 @@ reset at the start of every contact, and a temporarily invalid coordinate holds 
 output without advancing the filter. The fixed 22 mm Trackpad01 default is deadband 8; a board
 only needs an override when its measurements call for it.
 
-### 2.2 Stationary Absolute Resend and Touch Verification
+### 2.2 Touch Verification
 
-Stationary resend is available only in absolute-report mode. It requires `report-abs;` and a
-non-zero `stationary-report-interval-ms`. Relative mode ignores the resend interval and resend
-layers, but touch verification remains active in both modes.
-
-In IQS7211E Event Mode, the sensor may stop generating new events while a finger is held still. If `report-abs` feeds a joystick-style or padstick-style input processor, this can make the downstream processor stop moving even though touch is still active.
-
-`stationary-report-interval-ms` keeps that pipeline alive by periodically resending the last `INPUT_ABS_X` / `INPUT_ABS_Y` report while touch remains active. The feature is disabled by default because it only applies to absolute-report workflows.
-
-`stationary-report-layers` limits the resend to specific layers. This is useful when absolute coordinates feed different processors on different layers. For example, a padstick layer can receive stationary resends, while scroll or matrix layers can avoid them.
-
-The array contains layer numbers, not a bit mask: `<1>` means layer 1 only, and `<0 1>` means layers 0 and 1. This setting controls only periodic resends. It does not enable or change the coordinate filter on those layers.
-
-A resend is allowed whenever any listed layer is active, whether or not another layer sits above it - deliberately not the highest-active-layer test `scroll-trigger-layers` uses. ZMK chooses a processor chain per event from the layer active at that moment, and by the first listener entry that matches rather than by the highest layer, so a listed layer can be the one holding the chain while a higher layer sits above it. Asking only about the top would withhold the resends that chain relies on and stop a stationary contact dead.
-
-`touch-verify-interval-ms` independently checks that the physical touch is still there in both report modes. It does not depend on `stationary-report-interval-ms` and is not gated by `stationary-report-layers`, because resend routing belongs to downstream processors while touch liveness belongs to the sensor driver. Giving both modes the same verify samples also makes stationary velocity decay and release-time inertia agree. If the read fails or the sensor reports no fingers, the driver releases touch and stops any stale coordinate resend. The default is 120 ms; set it to 0 only if the sensor's slower fallback is preferred.
+`touch-verify-interval-ms` independently checks that the physical touch is still present in both report modes. IQS7211E Event Mode can stop producing interrupts while a finger is held still, so this full report read detects a physical release or I2C failure even when no new edge arrives. If the read fails or the sensor reports no fingers, the driver releases the stale contact. The default is 120 ms; set it to 0 only if the sensor's slower 60-second fallback is deliberately preferred.
 
 Every full report also checks the sensor's `Show Reset` flag. If the IQS7211E
 watchdog or a sensor-only power interruption resets the part after start-up,
@@ -87,40 +73,47 @@ The check is a full report read, not a bare `INFO_FLAGS` poll. A partial read fo
 
 When host verification is active, the driver programs the chip's Idle-Touch timeout to 0 so the chip cannot reseed underneath a touch the host still owns. When the verify interval is 0, the chip's 60-second timeout remains enabled as the stuck-touch fallback in either report mode.
 
-Example:
-
-```dts
-report-abs;
-stationary-report-interval-ms = <20>;
-stationary-report-layers = <1>;
-touch-verify-interval-ms = <120>;
-```
-
-In this example, stationary resends run every 20 ms whenever layer 1 is active. Touch presence is verified every 120 ms on every layer, including while layer 1 is inactive.
-
 ### 2.3 Scroll Layer Trigger Control
 
-`scroll-layer` selects the layer that is activated while the scroll slider area is touched. `scroll-trigger-layers` limits where that automatic activation is allowed.
+`scroll-slider-layer` selects the driver-owned layer activated while the scroll slider area is touched. `scroll-slider-trigger-layers` limits where that automatic activation is allowed. `scroll-layers` lists keymap-owned manual scroll layers that the driver monitors without changing.
 
-The driver checks the highest active ZMK layer when a touch starts near the scroll slider area. If that layer is listed in `scroll-trigger-layers`, the driver activates `scroll-layer`. If the current highest active layer is not listed, the touch is handled normally and the scroll layer is not activated.
+The driver checks the highest active ZMK layer when a touch starts near the scroll slider area. If that layer is listed in `scroll-slider-trigger-layers`, the driver activates `scroll-slider-layer`. If the current highest active layer is not listed, the touch is handled normally and the slider layer is not activated.
 
 Example:
 
 ```dts
-scroll-layer = <6>;
+scroll-slider-layer = <6>;
 scroll-start = <50>;
-scroll-trigger-layers = <0>;
+scroll-slider-trigger-layers = <0>;
+scroll-layers = <2 3>;
 ```
 
 In this example, layer 6 is used as the scroll layer, but it can only be triggered from layer 0. This is useful when another layer, such as a padstick or mouse-only layer, should keep the full pad area available without the right edge entering the scroll layer.
 
-If `scroll-trigger-layers` is omitted, the driver keeps the previous behavior and allows any layer to trigger `scroll-layer`.
+If `scroll-slider-trigger-layers` is omitted, the driver keeps the previous behavior and allows any layer to trigger `scroll-slider-layer`.
 
-### 2.4 Filter Tests
+### 2.4 Configuration Design Procedure
+
+Choose configuration in this order instead of selecting isolated values first. This keeps driver-owned layers, keymap-owned layers, and input-processor coordinate conversion separate.
+
+| Step | Decide | Properties | Selection rule and constraint |
+|---|---|---|---|
+| 1 | Wire connection | `reg`, `irq-gpios` | Required. Use the board I2C address and RDY interrupt GPIO from the schematic. |
+| 2 | Tap gestures | `single-tap`, `double-tap`, `triple-tap` | `-1` disables a gesture; `0` through `2` select `BTN_0` through `BTN_2`. Leave unneeded gestures disabled. |
+| 3 | Physical orientation | `rotate-cw` | Select `<0>` through `<3>` for the installed orientation. The driver rotates coordinates and the right-edge slider together; do not duplicate that rotation in an input processor. |
+| 4 | Coordinate mode | `report-abs` | Omit for a direct relative pointer. Set `report-abs;` for processors that consume absolute coordinates, such as absolute-to-relative, padstick, or matrix. That downstream path must consume or suppress `INPUT_BTN_TOUCH`. |
+| 5 | Noise boundary | `jitter-deadband` | Measure from the Trackpad01 default `<8>`. Raise it for stationary jitter, lower it if fine movement is lost. `0` disables only the deadband; the median filter remains. |
+| 6 | Right-edge slider | `scroll-slider-layer`, `scroll-start`, `scroll-slider-trigger-layers` | If used, assign `scroll-slider-layer` an exclusive layer that no key binding, macro, or behavior activates. `scroll-start` is its right-edge width; start at `<40>` and tune. Add trigger layers only to restrict the highest active layer that may enter slider mode. |
+| 7 | Manual scrolling | `scroll-layers` | List only keymap-owned manual-scroll layers. The driver observes but never changes them. Do not repeat `scroll-slider-layer`. A contact visiting one suppresses its tap and one delayed post-release tap. |
+| 8 | Contact liveness | `touch-verify-interval-ms` | Normally retain `<120>`. It independently releases stale contacts after a read failure or no-finger report. Set `<0>` only when deliberately relying on the sensor's 60-second fallback. |
+
+After choosing the design, exercise normal pointer movement, the right-edge slider, every manual scroll layer, every tap, a delayed tap after layer release, a stationary contact, and suspend/resume on hardware. Before building, check that DTS property names and layer IDs match the input-processor listener layers.
+
+### 2.5 Filter Tests
 
 The standalone host tests cover deadband behavior, spike rejection, contact reset, invalid
-frames, stationary velocity decay, absolute/relative coordinate parity, runtime reset flag
-detection, and the mode-specific `INPUT_BTN_TOUCH` policy. The parity scenario derives each
+frames, zero-delta relative velocity behavior, absolute/relative coordinate parity, runtime
+reset flag detection, and the mode-specific `INPUT_BTN_TOUCH` policy. The parity scenario derives each
 expected relative delta independently from the absolute filtered coordinate stream:
 
 ```sh
@@ -203,14 +196,12 @@ Add the IQS7211E node in your keyboard DTS overlay file (example of XIAO_BLE boa
         triple-tap = <0>;
 
         /* Scroll slider settings */
-        scroll-layer = <1>;
+        scroll-slider-layer = <1>;
         scroll-start = <27>;
-        // scroll-trigger-layers = <0>; // optional: only these highest active layers may enter scroll mode
+        // scroll-slider-trigger-layers = <0>; // optional: only these highest active layers may enter slider mode
+        // scroll-layers = <2 3>; // optional: keymap-owned manual scroll layers; do not include layer 1
         rotate-cw = <0>;
         // report-abs; // Use absolute coordinates (0-1024 inclusive)
-        // The following absolute-only options require report-abs.
-        // stationary-report-interval-ms = <20>; // optional: resend stationary ABS reports
-        // stationary-report-layers = <1>; // optional: resend only while one of these layers is active
         // touch-verify-interval-ms = <120>; // optional: layer-independent touch verify
     };
 };
@@ -227,6 +218,15 @@ Add the IQS7211E node in your keyboard DTS overlay file (example of XIAO_BLE boa
             input-processors = <&zip_xy_scaler 1 20>,
                                <&zip_xy_to_scroll_mapper>;
         };
+        /* If scroll-layers is set above, add a matching listener entry with
+         * the intended manual-scroll processor chain, for example:
+         *
+         * manual_scroller {
+         *     layers = <2 3>;
+         *     input-processors = <&zip_xy_scaler 1 20>,
+         *                        <&zip_xy_to_scroll_mapper>;
+         * };
+         */
     };
 };
 ```
@@ -244,8 +244,8 @@ CONFIG_IQS7211E=y
 ```
 
 The driver uses one private work queue for all IQS7211E instances. Sensor
-reports, generated click edges, stationary reports, touch verification, and
-suspend-time releases all run there. This is required for reliable input
+reports, generated click edges, touch verification, and suspend-time releases
+all run there. This is required for reliable input
 delivery: Zephyr's asynchronous input backend may make reports from the system
 work queue non-blocking, so a full input queue could otherwise drop a release.
 
@@ -266,13 +266,22 @@ CONFIG_IQS7211E_WORKQUEUE_PRIORITY=-1
 For a diagnostic build, enable
 `CONFIG_IQS7211E_WORKQUEUE_STACK_USAGE=y`. The driver then logs a new stack
 high-water mark when peak usage increases. Measure representative movement,
-tap sequences, stationary touch verification, and suspend/resume before
+tap sequences, a held contact with touch verification, and suspend/resume before
 reducing the stack size. The diagnostic option is disabled by default.
 
 ### 3.4 Build Firmware
 
 Push your changes to your GitHub repository.
 The GitHub Actions workflow automatically builds the firmware and generates artifacts (`.uf2` or `.bin`) ready for download.
+
+### 3.5 ZMK Studio
+
+The driver supports ZMK Studio, including Studio layer reordering: its layer
+properties use stable keymap layer IDs rather than Studio's displayed order.
+The trackpad configuration and input-processor routing remain firmware
+configuration, while Studio edits ordinary key bindings at runtime. See
+[Using the IQS7211E driver with ZMK Studio](docs/zmk-studio.md) for the exact
+keymap, GitHub Actions, and validation setup.
 
 ## 4. HW and Dimensions
 

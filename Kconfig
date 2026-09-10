@@ -17,8 +17,8 @@ config IQS7211E_WORKQUEUE_STACK_SIZE
   range 1024 4096
   help
     Stack size in bytes for the driver-owned work queue. The queue serializes
-    sensor reads, input reports, generated clicks, stationary reports, touch
-    verification, and suspend-time releases.
+    sensor reads, input reports, generated clicks, touch verification, and
+    suspend-time releases.
 
 config IQS7211E_WORKQUEUE_PRIORITY
   int "IQS7211E work queue priority"
