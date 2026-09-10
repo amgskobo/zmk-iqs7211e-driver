@@ -274,6 +274,15 @@ reducing the stack size. The diagnostic option is disabled by default.
 Push your changes to your GitHub repository.
 The GitHub Actions workflow automatically builds the firmware and generates artifacts (`.uf2` or `.bin`) ready for download.
 
+### 3.5 ZMK Studio
+
+The driver supports ZMK Studio, including Studio layer reordering: its layer
+properties use stable keymap layer IDs rather than Studio's displayed order.
+The trackpad configuration and input-processor routing remain firmware
+configuration, while Studio edits ordinary key bindings at runtime. See
+[Using the IQS7211E driver with ZMK Studio](docs/zmk-studio.md) for the exact
+keymap, GitHub Actions, and validation setup.
+
 ## 4. HW and Dimensions
 
 ### 4.1 Trackpad01 Front view (HASL)

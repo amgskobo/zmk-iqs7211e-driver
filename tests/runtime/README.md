@@ -16,6 +16,8 @@ Covered sequences:
   followed by layer deactivation and a delayed tap; the two paths use the same
   tap-suppression history.
 - Brief manual or slider layer activation between sensor reports.
+- ZMK Studio layer reordering: a configured trigger layer ID is still matched
+  after its visual layer index changes.
 - Normal taps after a suppressed contact, including when no delayed tap arrives.
 - A new contact waits for the previous contact's pending release.
 

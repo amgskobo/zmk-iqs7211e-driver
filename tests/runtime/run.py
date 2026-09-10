@@ -9,6 +9,7 @@ names = ["iqs7211e_report_abs_coordinates", "iqs7211e_release_click",
          "iqs7211e_release_touch", "iqs7211e_begin_runtime_reinitialization",
          "iqs7211e_click_work_handler", "iqs7211e_report_rel_coordinates",
          "iqs7211e_abort_touch_after_report_failure", "iqs7211e_scroll_layer_active",
+         "iqs7211e_layer_allowed",
          "iqs7211e_touch_verify_chain_alive",
          "iqs7211e_report_data"]
 functions = []

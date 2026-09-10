@@ -243,6 +243,15 @@ CONFIG_IQS7211E_WORKQUEUE_PRIORITY=-1
 変更を GitHub リポジトリにプッシュします。
 GitHub Actions のワークフローが自動的にファームウェアをビルドし、ダウンロード可能なアーティファクト (`.uf2` または `.bin`) を生成します。
 
+### 3.5 ZMK Studio
+
+ZMK Studio のレイヤー並べ替えを含めてサポートします。ドライバーの
+DeviceTree プロパティは、Studio で表示される順番ではなく、並べ替え後も
+変わらない keymap layer ID を使います。トラックパッドと input processor
+chain の設定は firmware 側に保持し、通常キーの binding を Studio 側で変更
+します。具体的な keymap、GitHub Actions、確認手順は
+[ZMK Studio で IQS7211E ドライバーを使う](docs/zmk-studio.md) を参照してください。
+
 ## 4. ハードウェアと寸法
 
 ### 4.1 Trackpad01 前面図 (HASL)

@@ -18,6 +18,8 @@ struct iqs7211e_config {
     uint16_t touch_verify_interval_ms;
     const uint8_t *scroll_layers;
     uint8_t scroll_layer_count;
+    const uint8_t *scroll_slider_trigger_layers;
+    uint8_t scroll_slider_trigger_layer_count;
 };
 struct iqs7211e_data {
     const struct device *dev;
@@ -94,6 +96,17 @@ static int input_report_rel(const struct device *dev, int code, int value, bool 
 }
 static uint32_t layers;
 static int fingers, gesture, queued_clicks;
+typedef uint8_t zmk_keymap_layer_index_t;
+typedef uint8_t zmk_keymap_layer_id_t;
+static zmk_keymap_layer_index_t highest_layer_index;
+static zmk_keymap_layer_id_t studio_layer_order[8];
+static zmk_keymap_layer_index_t zmk_keymap_highest_layer_active(void) {
+    return highest_layer_index;
+}
+static zmk_keymap_layer_id_t
+zmk_keymap_layer_index_to_id(zmk_keymap_layer_index_t index) {
+    return studio_layer_order[index];
+}
 static bool zmk_keymap_layer_active(int layer) { return (layers & (1u << layer)) != 0; }
 static int zmk_keymap_layer_activate(int layer, bool unused) {
     (void)unused; layers |= 1u << layer; return 0;
@@ -112,6 +125,20 @@ static void iqs7211e_queue_clicks(struct iqs7211e_data *d, uint16_t button, uint
 /* DRIVER_FUNCTIONS */
 
 int main(void) {
+    /* ZMK Studio reorders layer indexes, but DTS continues to name layer IDs. */
+    const uint8_t studio_trigger_layers[] = {4};
+    struct iqs7211e_config studio_config = {
+        .scroll_slider_trigger_layers = studio_trigger_layers,
+        .scroll_slider_trigger_layer_count = 1,
+    };
+    studio_layer_order[0] = 4; /* Layer ID 4 was moved to the top/index 0. */
+    highest_layer_index = 0;
+    assert(iqs7211e_layer_allowed(studio_config.scroll_slider_trigger_layers,
+                                  studio_config.scroll_slider_trigger_layer_count));
+    studio_layer_order[0] = 1;
+    assert(!iqs7211e_layer_allowed(studio_config.scroll_slider_trigger_layers,
+                                   studio_config.scroll_slider_trigger_layer_count));
+
     const struct iqs7211e_config config = {.report_abs = true, .scroll_slider_layer = 6};
     const struct device dev = {.config = &config};
     struct iqs7211e_data d = {.dev = &dev, .click_edges = 5};
