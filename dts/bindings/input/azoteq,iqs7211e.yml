@@ -5,6 +5,14 @@ compatible: "azoteq,iqs7211e"
 include: i2c-device.yaml
 
 properties:
+  scroll-layers:
+    type: array
+    description: |
+      Existing manual-scroll keymap layer IDs. The driver only watches these;
+      it never activates or deactivates them. A contact that visits any listed
+      layer is considered scrolling, so its tap and one delayed no-finger tap
+      after deactivation are suppressed. The scroll-slider-layer is monitored
+      in the same way automatically. Omit when no manual scroll layers exist.
   reg:
     required: true
     description: I2C address of the device
@@ -30,25 +38,28 @@ properties:
     description: |
       Set the button triggered by triple-tap.
       -1 = disabled, 0 = BTN_0, 1 = BTN_1, 2 = BTN_2
-  scroll-layer:
+  scroll-slider-layer:
     type: int
     default: -1
     description: |
-      Layer activated while the scroll slider area is touched.
-      -1 = disabled, others = layer number.
+      Driver-owned layer activated while the right-edge scroll slider is touched.
+      -1 = disabled, otherwise an existing keymap layer ID. This must be a
+      driver-exclusive layer: do not also activate it from a key binding,
+      macro, or other behavior.
   scroll-start:
     type: int
     default: 40
     description: |
       Padding from the right edge used to detect the scroll slider area.
       The normalized coordinate range is 0-1024 inclusive.
-  scroll-trigger-layers:
+  scroll-slider-trigger-layers:
     type: array
     description: |
-      Restrict automatic scroll-layer activation to these highest active layers.
-      If omitted, automatic scroll-layer activation is allowed on any layer.
-      This does not change the target scroll-layer; it only controls which
-      layers may trigger it.
+      Restrict automatic scroll-slider-layer activation to these highest active layers.
+      If omitted, automatic slider activation is allowed on any layer.
+      This does not change the target scroll-slider-layer; it only controls which
+      layers may trigger it. Values are existing keymap layer IDs, not layer
+      order indexes.
   rotate-cw:
     type: int
     default: 0
@@ -65,7 +76,8 @@ properties:
   report-abs:
     type: boolean
     description: |
-      If true, report absolute coordinates instead of relative ones.
+      If true, report absolute coordinates instead of relative ones. If omitted,
+      the driver reports relative coordinates directly.
   jitter-deadband:
     type: int
     default: 8
@@ -77,45 +89,13 @@ properties:
       Trackpad01 panel; override it from the board overlay when measurements
       show a different stationary-jitter/fine-motion boundary. The normalized
       coordinate range is 0-1024 inclusive.
-  stationary-report-interval-ms:
-    type: int
-    default: 0
-    description: |
-      When report-abs is enabled, resend the last absolute coordinate report
-      at this interval while touch remains active. This keeps downstream
-      joystick-style processors moving smoothly during stationary touches in
-      IQS7211E Event Mode. This property has no effect in relative-report mode.
-      Set to 0 to disable.
-  stationary-report-layers:
-    type: array
-    description: |
-      Restrict stationary absolute coordinate resends to these layers. Resends
-      are allowed whenever any listed layer is active, whether or not another
-      layer sits above it. If omitted, resends are allowed on any layer.
-
-      This is deliberately not the highest-active-layer test that
-      scroll-trigger-layers uses. ZMK chooses a processor chain per event from
-      the layer active at that moment, and by the first listener entry that
-      matches rather than by the highest layer, so a listed layer can be the
-      one holding the chain while a higher layer sits above it. Asking only
-      about the top would withhold the resends that chain relies on and stop a
-      stationary contact dead.
-
-      Values are layer numbers, not a bit mask: <1> means layer 1 only, while
-      <0 1> means layers 0 and 1. This property only controls periodic resends;
-      it does not enable or tune coordinate filtering or touch verification on
-      those layers. It has no effect unless report-abs and
-      stationary-report-interval-ms are enabled.
   touch-verify-interval-ms:
     type: int
     default: 120
     description: |
       While a touch remains active, run a full report read at this interval to
       verify that the physical touch is still present. This applies equally to
-      absolute and relative reporting so both modes observe the same stationary
-      samples, release timing, and velocity decay. Verification is independent
-      of stationary-report-interval-ms and stationary-report-layers: resend
-      settings select downstream processor traffic, while this fail-safe checks
-      sensor liveness. If the read fails or no fingers are present, report touch
-      release and stop any pending resends. Set to 0 to disable host verification
+      absolute and relative reporting so both modes observe the same touch
+      samples and release timing. If the read fails or no fingers are present, report touch
+      release and stop verification. Set to 0 to disable host verification
       and retain the sensor's 60-second Idle-Touch fallback.

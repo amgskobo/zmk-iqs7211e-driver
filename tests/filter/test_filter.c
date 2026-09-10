@@ -223,9 +223,9 @@ static void test_absolute_relative_parity(void)
     CHECK(relative_state.filter.median_prev_2 == 900);
 }
 
-static void test_stationary_samples_decay_relative_velocity(void)
+static void test_zero_delta_drains_relative_velocity(void)
 {
-    /* A stationary report must drain the direct REL path's delta history. */
+    /* A zero-delta REL sample drains the direct path's delta history. */
     struct iqs7211e_relative_axis_result first =
         iqs7211e_relative_axis_apply(500, 500, 20);
     CHECK(first.delta == 0);
@@ -263,6 +263,24 @@ static void test_touch_state_reporting_policy(void)
     CHECK(!iqs7211e_runtime_reports_touch_state(false));
 }
 
+static void test_scroll_layer_ownership_policy(void)
+{
+    CHECK(iqs7211e_runtime_should_activate_scroll_slider_layer(false));
+    CHECK(!iqs7211e_runtime_should_activate_scroll_slider_layer(true));
+}
+
+static void test_delayed_scroll_tap_suppression_policy(void)
+{
+    CHECK(iqs7211e_runtime_latch_delayed_scroll_tap(true, false));
+    CHECK(!iqs7211e_runtime_latch_delayed_scroll_tap(true, true));
+    CHECK(!iqs7211e_runtime_latch_delayed_scroll_tap(false, false));
+
+    CHECK(iqs7211e_runtime_should_suppress_delayed_scroll_tap(true, false, true));
+    CHECK(!iqs7211e_runtime_should_suppress_delayed_scroll_tap(true, true, true));
+    CHECK(!iqs7211e_runtime_should_suppress_delayed_scroll_tap(true, false, false));
+    CHECK(!iqs7211e_runtime_should_suppress_delayed_scroll_tap(false, false, true));
+}
+
 static void test_runtime_show_reset_detection(void)
 {
     CHECK(!iqs7211e_runtime_show_reset(0x00));
@@ -279,9 +297,11 @@ int main(void)
     test_single_sample_spike_is_bounded();
     test_zero_deadband_keeps_median_filter();
     test_absolute_relative_parity();
-    test_stationary_samples_decay_relative_velocity();
+    test_zero_delta_drains_relative_velocity();
     test_coordinate_validity();
     test_touch_state_reporting_policy();
+    test_scroll_layer_ownership_policy();
+    test_delayed_scroll_tap_suppression_policy();
     test_runtime_show_reset_detection();
     puts("iqs7211e host tests passed");
     return 0;

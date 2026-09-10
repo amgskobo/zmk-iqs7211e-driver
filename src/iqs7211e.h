@@ -119,16 +119,17 @@ struct iqs7211e_config
     int8_t single_tap;
     int8_t double_tap;
     int8_t triple_tap;
-    int8_t scroll_layer;
+    /* Driver-owned layer for the right-edge scroll slider. */
+    int8_t scroll_slider_layer;
     uint16_t scroll_start;
-    const uint8_t *scroll_trigger_layers;
-    uint8_t scroll_trigger_layer_count;
-    const uint8_t *stationary_report_layers;
-    uint8_t stationary_report_layer_count;
+    const uint8_t *scroll_slider_trigger_layers;
+    uint8_t scroll_slider_trigger_layer_count;
     uint8_t rotate_cw;
     bool report_abs;
+    /* Keymap-owned manual-scroll layers; the slider layer is separate above. */
+    const uint8_t *scroll_layers;
+    uint8_t scroll_layer_count;
     uint16_t jitter_deadband;
-    uint16_t stationary_report_interval_ms;
     uint16_t touch_verify_interval_ms;
 };
 
@@ -142,7 +143,14 @@ struct iqs7211e_data
     atomic_t suspended;
     bool sensor_suspended;
     uint8_t sensor_resume_attempts;
-    bool is_scroll_layer_active;
+    bool is_scroll_slider_layer_active;
+    /* True only when this contact caused the driver to activate scroll_slider_layer. */
+    bool scroll_slider_layer_activated_by_driver;
+    /* A scroll contact ended without its tap gesture in the same report. */
+    bool suppress_delayed_scroll_tap;
+    /* Bit 0: contact open; bit 1: contact visited a scroll layer.
+     * Layer callbacks and the private input queue share this atomic state. */
+    atomic_t contact_tap_state;
     uint8_t gestures[2];
     uint8_t info_flags[2];
     uint8_t touch_count;
@@ -170,15 +178,14 @@ struct iqs7211e_data
     struct iqs7211e_axis_filter finger_1_filter_x;
     struct iqs7211e_axis_filter finger_1_filter_y;
     bool last_touched_state;
+    bool touch_release_pending;
     bool touch_verify_pending;
-    uint32_t diagnostic_irq_count;
-    uint32_t diagnostic_work_count;
-    uint32_t diagnostic_report_count;
-    uint32_t diagnostic_rdy_low_count;
-    uint32_t diagnostic_rdy_recovery_count;
+    atomic_t diagnostic_irq_count;
+    atomic_t diagnostic_work_count;
+    atomic_t diagnostic_report_count;
+    atomic_t diagnostic_rdy_low_count;
+    atomic_t diagnostic_rdy_recovery_count;
     int diagnostic_last_report_ret;
-    struct k_work_delayable stationary_report_work;
-    struct k_work_sync stationary_report_work_sync;
     struct k_work_delayable touch_verify_work;
     struct k_work_sync touch_verify_work_sync;
     struct k_work_delayable rdy_recheck_work;

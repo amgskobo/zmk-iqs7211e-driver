@@ -28,4 +28,28 @@ static inline bool iqs7211e_runtime_reports_touch_state(bool report_abs)
     return report_abs;
 }
 
+/* Do not claim ownership of a layer that another ZMK path already activated. */
+static inline bool iqs7211e_runtime_should_activate_scroll_slider_layer(bool layer_active)
+{
+    return !layer_active;
+}
+
+/*
+ * IQS7211E can deliver a tap gesture in a later no-finger report than the
+ * scroll contact that caused it. The scroll-slider layer is intentionally gone by
+ * then, so its input processor cannot identify the gesture as scroll-origin.
+ */
+static inline bool iqs7211e_runtime_latch_delayed_scroll_tap(bool was_scroll,
+                                                              bool release_has_tap)
+{
+    return was_scroll && !release_has_tap;
+}
+
+static inline bool iqs7211e_runtime_should_suppress_delayed_scroll_tap(bool pending,
+                                                                         bool has_fingers,
+                                                                         bool is_tap)
+{
+    return pending && !has_fingers && is_tap;
+}
+
 #endif /* ZEPHYR_DRIVERS_INPUT_IQS7211E_RUNTIME_H_ */

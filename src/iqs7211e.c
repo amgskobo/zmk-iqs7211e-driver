@@ -13,6 +13,8 @@
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/kernel.h>
 #include <zmk/keymap.h>
+#include <zmk/event_manager.h>
+#include <zmk/events/layer_state_changed.h>
 #include <zephyr/pm/device.h>
 #include "iqs7211e_init.h"
 #include "iqs7211e.h"
@@ -55,6 +57,7 @@ static size_t iqs7211e_work_queue_min_unused =
 #endif
 
 static enum iqs7211e_gestures_event iqs7211e_get_touchpad_event(const struct iqs7211e_data *data);
+static bool iqs7211e_is_tap_gesture(enum iqs7211e_gestures_event gesture_event);
 static bool iqs7211e_init_state(struct iqs7211e_data *data);
 static int iqs7211e_get_product_num(struct iqs7211e_data *data);
 static int iqs7211e_read_info_flags(const struct iqs7211e_data *data, uint8_t *info_flags);
@@ -64,7 +67,6 @@ static bool iqs7211e_read_ati_active(struct iqs7211e_data *data);
 static int iqs7211e_read_bytes(const struct i2c_dt_spec *i2c, uint8_t reg, uint8_t *buf, size_t len);
 static int iqs7211e_write_bytes(const struct i2c_dt_spec *i2c, uint8_t reg, const uint8_t *data, size_t numBytes);
 static void iqs7211e_work_handler(struct k_work *work);
-static void iqs7211e_stationary_report_work_handler(struct k_work *work);
 static void iqs7211e_touch_verify_work_handler(struct k_work *work);
 static void iqs7211e_click_work_handler(struct k_work *work);
 static void iqs7211e_rdy_recheck_work_handler(struct k_work *work);
@@ -73,6 +75,10 @@ static void iqs7211e_pm_release_work_handler(struct k_work *work);
 #endif
 static int iqs7211e_release_click(struct iqs7211e_data *data);
 static void iqs7211e_queue_clicks(struct iqs7211e_data *data, uint16_t button, uint8_t clicks);
+static int iqs7211e_report_abs_coordinates(struct iqs7211e_data *data,
+                                            int16_t x, int16_t y);
+static int iqs7211e_report_rel_coordinates(struct iqs7211e_data *data,
+                                            int16_t dx, int16_t dy);
 static int iqs7211e_report_data(struct iqs7211e_data *data);
 static void iqs7211e_gpio_callback(const struct device *port, struct gpio_callback *cb, gpio_port_pins_t pins);
 static int iqs7211e_write_defaults(struct iqs7211e_data *data);
@@ -84,9 +90,7 @@ static int iqs7211e_run_ati(struct iqs7211e_data *data);
 static int iqs7211e_queue_value_updates(struct iqs7211e_data *data);
 static int iqs7211e_set_event_mode(struct iqs7211e_data *data);
 static bool iqs7211e_layer_allowed(const uint8_t *layers, uint8_t layer_count);
-static bool iqs7211e_scroll_trigger_layer_allowed(const struct iqs7211e_config *config);
-static bool iqs7211e_stationary_report_layer_allowed(const struct iqs7211e_config *config);
-static bool iqs7211e_stationary_chain_alive(const struct iqs7211e_data *data);
+static bool iqs7211e_scroll_slider_trigger_layer_allowed(const struct iqs7211e_config *config);
 static bool iqs7211e_touch_verify_chain_alive(const struct iqs7211e_data *data);
 static int iqs7211e_release_touch(struct iqs7211e_data *data);
 static int iqs7211e_begin_runtime_reinitialization(struct iqs7211e_data *data);
@@ -645,6 +649,13 @@ static enum iqs7211e_gestures_event iqs7211e_get_touchpad_event(const struct iqs
     }
 }
 
+static bool iqs7211e_is_tap_gesture(enum iqs7211e_gestures_event gesture_event)
+{
+    return gesture_event == IQS7211E_GESTURE_SINGLE_TAP ||
+           gesture_event == IQS7211E_GESTURE_DOUBLE_TAP ||
+           gesture_event == IQS7211E_GESTURE_TRIPLE_TAP;
+}
+
 static uint8_t iqs7211e_get_bit(uint8_t byte, uint8_t pos)
 {
     return (byte >> pos) & 0x01;
@@ -657,7 +668,10 @@ static bool iqs7211e_layer_allowed(const uint8_t *layers, uint8_t layer_count)
         return true;
     }
 
-    uint8_t active_layer = zmk_keymap_highest_layer_active();
+    /* ZMK returns a layer *index* here.  DeviceTree properties name stable
+     * layer IDs, which differ after ZMK Studio reorders the keymap. */
+    zmk_keymap_layer_index_t active_index = zmk_keymap_highest_layer_active();
+    zmk_keymap_layer_id_t active_layer = zmk_keymap_layer_index_to_id(active_index);
 
     for (uint8_t i = 0; i < layer_count; i++)
     {
@@ -674,58 +688,32 @@ static bool iqs7211e_layer_allowed(const uint8_t *layers, uint8_t layer_count)
  * A gesture belongs to the mode the board is in, so it takes the highest active
  * layer: the top of the stack is what the user is driving.
  */
-static bool iqs7211e_scroll_trigger_layer_allowed(const struct iqs7211e_config *config)
+static bool iqs7211e_scroll_slider_trigger_layer_allowed(const struct iqs7211e_config *config)
 {
-    return iqs7211e_layer_allowed(config->scroll_trigger_layers, config->scroll_trigger_layer_count);
+    return iqs7211e_layer_allowed(config->scroll_slider_trigger_layers,
+                                  config->scroll_slider_trigger_layer_count);
 }
 
 /*
- * A resend belongs to whichever processor chain is running, which is a
- * different question. ZMK picks that chain per event from the layer active at
- * the moment, and by the first listener entry that matches - not by the highest
- * layer. So a listed layer can be the one holding the chain while a higher one
- * sits above it, and asking only about the top would withhold the resends the
- * chain below is relying on, stopping a stationary contact dead.
- *
- * Any listed layer being active is the closest this side can get to that rule.
- * It errs towards resending: a chain that does not need the repeats reads them
- * as no movement, which costs nothing, while withholding them stops the
- * pointer outright.
+ * Common tap gate for the automatic slider layer and additional layers.
+ * Layer ownership is intentionally irrelevant to gesture suppression.
  */
-static bool iqs7211e_stationary_report_layer_allowed(const struct iqs7211e_config *config)
+static bool iqs7211e_scroll_layer_active(const struct iqs7211e_config *config)
 {
-    if (config->stationary_report_layer_count == 0)
+    /* The automatic slider and manually selected layers use the same gate. */
+    if (config->scroll_slider_layer >= 0 &&
+        zmk_keymap_layer_active(config->scroll_slider_layer))
     {
         return true;
     }
-
-    for (uint8_t i = 0; i < config->stationary_report_layer_count; i++)
+    for (uint8_t i = 0; i < config->scroll_layer_count; i++)
     {
-        if (zmk_keymap_layer_active(config->stationary_report_layers[i]))
+        if (zmk_keymap_layer_active(config->scroll_layers[i]))
         {
             return true;
         }
     }
-
     return false;
-}
-
-/*
- * Whether the resend chain should still be ticking.
- *
- * This deliberately leaves the layer test out. A gate that stops the chain
- * rather than just the resend can never let it start again: a contact held
- * still produces no events from the sensor, so once the timer stops there is
- * nothing left to schedule the next one, and the contact is stranded until the
- * finger moves or lifts. So the chain lives as long as the contact does, and
- * the layer only decides whether a given tick puts anything on the wire.
- */
-static bool iqs7211e_stationary_chain_alive(const struct iqs7211e_data *data)
-{
-    const struct iqs7211e_config *config = data->dev->config;
-
-    return config->report_abs && config->stationary_report_interval_ms > 0 &&
-           data->last_touched_state;
 }
 
 static bool iqs7211e_touch_verify_chain_alive(const struct iqs7211e_data *data)
@@ -752,8 +740,9 @@ static int iqs7211e_release_touch(struct iqs7211e_data *data)
 {
     const struct iqs7211e_config *config = data->dev->config;
     int ret;
+    int first_error = 0;
+    bool suppressed_contact = (atomic_set(&data->contact_tap_state, 0) & 2) != 0;
 
-    k_work_cancel_delayable(&data->stationary_report_work);
     k_work_cancel_delayable(&data->touch_verify_work);
 
     /*
@@ -768,7 +757,7 @@ static int iqs7211e_release_touch(struct iqs7211e_data *data)
      * BTN_TOUCH release, which is the other reason it belongs inside here:
      * with no release to flush there is nothing for it to do.
      */
-    if (data->last_touched_state)
+    if (data->last_touched_state || data->touch_release_pending)
     {
         if (iqs7211e_runtime_reports_touch_state(config->report_abs))
         {
@@ -777,41 +766,55 @@ static int iqs7211e_release_touch(struct iqs7211e_data *data)
             if (ret < 0)
             {
                 LOG_ERR("Failed to release touch: %d", ret);
-                return ret;
+                first_error = ret;
             }
-
-            ret = input_report_abs(data->dev, INPUT_ABS_X,
-                                   data->finger_1_prev_x, false, K_FOREVER);
-            if (ret < 0)
+            else
             {
-                LOG_ERR("Failed to report release X coordinate: %d", ret);
-                return ret;
-            }
-
-            ret = input_report_abs(data->dev, INPUT_ABS_Y,
-                                   data->finger_1_prev_y, true, K_FOREVER);
-            if (ret < 0)
-            {
-                LOG_ERR("Failed to report release Y coordinate: %d", ret);
-                return ret;
+                ret = iqs7211e_report_abs_coordinates(data, data->finger_1_prev_x,
+                                                       data->finger_1_prev_y);
+                if (ret < 0)
+                {
+                    first_error = ret;
+                }
             }
         }
 
         data->last_touched_state = false;
+        data->touch_release_pending = first_error < 0;
+        if (data->touch_release_pending && !atomic_get(&data->suspended))
+        {
+            iqs7211e_reschedule_work(&data->click_work,
+                                    K_MSEC(IQS7211E_CLICK_EDGE_MS));
+        }
     }
 
-    if (data->is_scroll_layer_active && config->scroll_layer >= 0)
+    if (data->scroll_slider_layer_activated_by_driver && config->scroll_slider_layer >= 0)
     {
-        zmk_keymap_layer_deactivate(config->scroll_layer, false);
-        data->is_scroll_layer_active = false;
-        LOG_DBG("Scroll layer deactivated");
+        zmk_keymap_layer_deactivate(config->scroll_slider_layer, false);
+        LOG_DBG("Scroll slider layer deactivated");
     }
+    data->suppress_delayed_scroll_tap |= suppressed_contact;
+    data->is_scroll_slider_layer_active = false;
+    data->scroll_slider_layer_activated_by_driver = false;
 
     data->touch_count = 0;
     data->finger_1_prev_dx = 0;
     data->finger_1_prev_dy = 0;
 
-    return 0;
+    return first_error;
+}
+
+/* A failed report after a contact has started must not strand its transient
+ * layer state while waiting for an interrupt that may never arrive. */
+static int iqs7211e_abort_touch_after_report_failure(struct iqs7211e_data *data,
+                                                      int report_error)
+{
+    int release_error = iqs7211e_release_touch(data);
+    if (release_error < 0)
+    {
+        LOG_WRN("Failed to clean up touch after report failure: %d", release_error);
+    }
+    return report_error;
 }
 
 /*
@@ -824,27 +827,35 @@ static int iqs7211e_release_touch(struct iqs7211e_data *data)
 static int iqs7211e_begin_runtime_reinitialization(struct iqs7211e_data *data)
 {
     int ret;
+    int first_error = 0;
 
     LOG_WRN("IQS7211E runtime reset detected - reinitializing");
 
     k_work_cancel_delayable(&data->click_work);
+    /* Cancel future presses, but retain the one release owed to the input
+     * subsystem. The click worker can retry that release after reset. */
+    data->click_edges = data->click_edges % 2;
     ret = iqs7211e_release_click(data);
     if (ret < 0)
     {
-        return ret;
+        first_error = ret;
+        iqs7211e_reschedule_work(&data->click_work,
+                                K_MSEC(IQS7211E_CLICK_EDGE_MS));
     }
 
     ret = iqs7211e_release_touch(data);
-    if (ret < 0)
+    if (ret < 0 && first_error == 0)
     {
-        return ret;
+        first_error = ret;
     }
+
+    data->suppress_delayed_scroll_tap = false;
 
     data->init_state = IQS7211E_INIT_UPDATE_SETTINGS;
     data->reset_called = false;
     data->touch_verify_pending = false;
     atomic_clear(&data->rdy_recheck_attempts);
-    return 0;
+    return first_error;
 }
 
 static int iqs7211e_write_defaults(struct iqs7211e_data *data)
@@ -1163,7 +1174,7 @@ static void iqs7211e_work_handler(struct k_work *work)
     {
         return;
     }
-    data->diagnostic_work_count++;
+    atomic_inc(&data->diagnostic_work_count);
 
     if (iqs7211e_init_state(data))
     {
@@ -1171,7 +1182,7 @@ static void iqs7211e_work_handler(struct k_work *work)
         data->diagnostic_last_report_ret = ret;
         if (ret >= 0)
         {
-            data->diagnostic_report_count++;
+            atomic_inc(&data->diagnostic_report_count);
         }
         if (ret < 0 && data->touch_verify_pending)
         {
@@ -1184,12 +1195,14 @@ static void iqs7211e_work_handler(struct k_work *work)
     int rdy_raw = gpio_pin_get_raw(config->irq_gpio.port, config->irq_gpio.pin);
     if (rdy_raw == 0)
     {
-        data->diagnostic_rdy_low_count++;
+        atomic_inc(&data->diagnostic_rdy_low_count);
     }
     LOG_DBG("FLOW irq=%u work=%u report=%u rdy_low=%u recover=%u rdy_raw=%d report_ret=%d",
-            data->diagnostic_irq_count, data->diagnostic_work_count,
-            data->diagnostic_report_count, data->diagnostic_rdy_low_count,
-            data->diagnostic_rdy_recovery_count, rdy_raw,
+            (unsigned int)atomic_get(&data->diagnostic_irq_count),
+            (unsigned int)atomic_get(&data->diagnostic_work_count),
+            (unsigned int)atomic_get(&data->diagnostic_report_count),
+            (unsigned int)atomic_get(&data->diagnostic_rdy_low_count),
+            (unsigned int)atomic_get(&data->diagnostic_rdy_recovery_count), rdy_raw,
             data->diagnostic_last_report_ret);
     if (rdy_raw < 0)
     {
@@ -1267,9 +1280,9 @@ static void iqs7211e_rdy_recheck_work_handler(struct k_work *work)
         return;
     }
 
-    data->diagnostic_rdy_recovery_count++;
+    atomic_inc(&data->diagnostic_rdy_recovery_count);
     LOG_DBG("RDY recovery queued: attempt=%d total=%u", (int)attempts,
-            data->diagnostic_rdy_recovery_count);
+            (unsigned int)atomic_get(&data->diagnostic_rdy_recovery_count));
     iqs7211e_note_work_queue_stack_usage();
 }
 
@@ -1284,7 +1297,16 @@ static void iqs7211e_click_work_handler(struct k_work *work)
     struct k_work_delayable *d_work = k_work_delayable_from_work(work);
     struct iqs7211e_data *data = CONTAINER_OF(d_work, struct iqs7211e_data, click_work);
 
-    if (atomic_get(&data->suspended) || data->click_edges == 0)
+    if (atomic_get(&data->suspended))
+    {
+        return;
+    }
+
+    if (data->touch_release_pending)
+    {
+        iqs7211e_release_touch(data);
+    }
+    if (data->click_edges == 0)
     {
         return;
     }
@@ -1338,6 +1360,42 @@ static int iqs7211e_release_click(struct iqs7211e_data *data)
     return 0;
 }
 
+static int iqs7211e_report_abs_coordinates(struct iqs7211e_data *data,
+                                            int16_t x, int16_t y)
+{
+    int ret = input_report_abs(data->dev, INPUT_ABS_X, x, false, K_FOREVER);
+    if (ret < 0)
+    {
+        LOG_ERR("Failed to report ABS X coordinate: %d", ret);
+        return ret;
+    }
+
+    ret = input_report_abs(data->dev, INPUT_ABS_Y, y, true, K_FOREVER);
+    if (ret < 0)
+    {
+        LOG_ERR("Failed to report ABS Y coordinate: %d", ret);
+    }
+    return ret;
+}
+
+static int iqs7211e_report_rel_coordinates(struct iqs7211e_data *data,
+                                            int16_t dx, int16_t dy)
+{
+    int ret = input_report_rel(data->dev, INPUT_REL_X, dx, false, K_FOREVER);
+    if (ret < 0)
+    {
+        LOG_ERR("Failed to report REL X coordinate: %d", ret);
+        return ret;
+    }
+
+    ret = input_report_rel(data->dev, INPUT_REL_Y, dy, true, K_FOREVER);
+    if (ret < 0)
+    {
+        LOG_ERR("Failed to report REL Y coordinate: %d", ret);
+    }
+    return ret;
+}
+
 /*
  * Queue `clicks` press/release pairs on `button`. If a tap arrives while a
  * previous sequence is still playing, the old one is released first so the
@@ -1366,41 +1424,6 @@ static void iqs7211e_queue_clicks(struct iqs7211e_data *data, uint16_t button, u
     }
 }
 
-static void iqs7211e_stationary_report_work_handler(struct k_work *work)
-{
-    struct k_work_delayable *d_work = k_work_delayable_from_work(work);
-    struct iqs7211e_data *data = CONTAINER_OF(d_work, struct iqs7211e_data, stationary_report_work);
-    const struct iqs7211e_config *config = data->dev->config;
-
-    if (atomic_get(&data->suspended) || !iqs7211e_stationary_chain_alive(data))
-    {
-        return;
-    }
-
-    if (!iqs7211e_stationary_report_layer_allowed(config))
-    {
-        /* Not this layer's business - skip the resend, keep the chain alive. */
-        iqs7211e_reschedule_work(
-            &data->stationary_report_work,
-            K_MSEC(config->stationary_report_interval_ms));
-        return;
-    }
-
-    input_report_abs(data->dev, INPUT_ABS_X, data->finger_1_prev_x, false,
-                     K_FOREVER);
-    input_report_abs(data->dev, INPUT_ABS_Y, data->finger_1_prev_y, true,
-                     K_FOREVER);
-
-    if (iqs7211e_stationary_chain_alive(data))
-    {
-        iqs7211e_reschedule_work(
-            &data->stationary_report_work,
-            K_MSEC(config->stationary_report_interval_ms));
-    }
-
-    iqs7211e_note_work_queue_stack_usage();
-}
-
 static void iqs7211e_touch_verify_work_handler(struct k_work *work)
 {
     struct k_work_delayable *d_work = k_work_delayable_from_work(work);
@@ -1419,8 +1442,8 @@ static void iqs7211e_touch_verify_work_handler(struct k_work *work)
      * report work gets to it. Queue the regular report path with the IRQ masked
      * so it is the sole owner of this communication window.
      *
-     * This timer is intentionally independent of stationary-report-work and
-     * its layer gate. It verifies the physical touch, not a processor route.
+     * This timer verifies the physical touch, rather than an input-processor
+     * route, and is therefore shared by absolute and relative reporting.
      */
     data->touch_verify_pending = true;
     atomic_clear(&data->rdy_recheck_attempts);
@@ -1442,6 +1465,15 @@ static void iqs7211e_touch_verify_work_handler(struct k_work *work)
 static int iqs7211e_report_data(struct iqs7211e_data *data)
 {
     const struct iqs7211e_config *config = data->dev->config;
+    /* Finish the old contact before accepting coordinates from a new one. */
+    if (data->touch_release_pending)
+    {
+        int release_ret = iqs7211e_release_touch(data);
+        if (release_ret < 0)
+        {
+            return release_ret;
+        }
+    }
     int ret = iqs7211e_queue_value_updates(data);
     if (ret < 0)
     {
@@ -1526,7 +1558,7 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
          * jump to (0,0). finger_1_prev_* is stored after normalization, so it
          * must not be rotated a second time - doing so mirrors the release
          * coordinate whenever rotate-cw is non-zero, and disagrees with the
-         * stationary-report paths, which use finger_1_prev_* directly.
+         * release path, which also uses finger_1_prev_* directly.
          */
         x = data->finger_1_prev_x;
         y = data->finger_1_prev_y;
@@ -1615,32 +1647,63 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
     {
         /* --- Path: Touch Active --- */
 
+        /* A new contact starts a new gesture epoch. Do not let an absent
+         * delayed gesture from the preceding scroll contact swallow a later,
+         * unrelated normal tap. */
+        if (data->suppress_delayed_scroll_tap)
+        {
+            LOG_DBG("Discarding pending delayed-scroll tap suppression on new contact");
+            data->suppress_delayed_scroll_tap = false;
+        }
+
         /* 3.1. Touch State Toggle */
         if (!data->last_touched_state)
         {
+            atomic_set(&data->contact_tap_state, 1);
+            if (iqs7211e_scroll_layer_active(config))
+            {
+                atomic_or(&data->contact_tap_state, 2);
+            }
             if (iqs7211e_runtime_reports_touch_state(config->report_abs))
             {
-                input_report_key(data->dev, INPUT_BTN_TOUCH, true, false,
-                                 K_FOREVER);
+                ret = input_report_key(data->dev, INPUT_BTN_TOUCH, true, false,
+                                       K_FOREVER);
+                if (ret < 0)
+                {
+                    LOG_ERR("Failed to report touch start: %d", ret);
+                    return ret;
+                }
             }
             data->last_touched_state = true;
         }
-
-        /* 3.2. Scroll Layer Detection */
-        if (data->touch_count <= 2 && config->scroll_layer >= 0 && !data->is_scroll_layer_active &&
-            iqs7211e_scroll_trigger_layer_allowed(config))
+        /* 3.2. Right-edge scroll-slider layer detection */
+        if (data->touch_count <= 2 && config->scroll_slider_layer >= 0 &&
+            !data->is_scroll_slider_layer_active &&
+            iqs7211e_scroll_slider_trigger_layer_allowed(config))
         {
             /* Compare against MaxX - padding */
             if (x > RESOLUTION_X - config->scroll_start)
             {
-                zmk_keymap_layer_activate(config->scroll_layer, false);
-                data->is_scroll_layer_active = true;
-                LOG_DBG("Scroll layer activated");
+                if (iqs7211e_runtime_should_activate_scroll_slider_layer(
+                        zmk_keymap_layer_active(config->scroll_slider_layer)))
+                {
+                    zmk_keymap_layer_activate(config->scroll_slider_layer, false);
+                    data->scroll_slider_layer_activated_by_driver = true;
+                }
+                data->is_scroll_slider_layer_active = true;
+                LOG_DBG("Scroll slider layer activated");
             }
         }
 
+        /* Sample after automatic layer activation, also covering a layer that
+         * was already active before this contact began. */
+        if (iqs7211e_scroll_layer_active(config))
+        {
+            atomic_or(&data->contact_tap_state, 2);
+        }
+
         /* 3.3. Gesture / Button Processing (Skip if scrolling) */
-        if (!data->is_scroll_layer_active)
+        if (!(atomic_get(&data->contact_tap_state) & 2))
         {
             switch (gesture_event)
             {
@@ -1670,18 +1733,29 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
         /* 3.4. Coordinate Reporting */
         if (config->report_abs)
         {
-            input_report_abs(data->dev, INPUT_ABS_X, x, false, K_FOREVER);
-            input_report_abs(data->dev, INPUT_ABS_Y, y, true, K_FOREVER);
+            ret = iqs7211e_report_abs_coordinates(data, x, y);
+            if (ret < 0)
+            {
+                return iqs7211e_abort_touch_after_report_failure(data, ret);
+            }
         }
         else if (data->touch_count >= skip_count)
         {
-            input_report_rel(data->dev, INPUT_REL_X, smooth_dx, false, K_FOREVER);
-            input_report_rel(data->dev, INPUT_REL_Y, smooth_dy, true, K_FOREVER);
+            ret = iqs7211e_report_rel_coordinates(data, smooth_dx, smooth_dy);
+            if (ret < 0)
+            {
+                return iqs7211e_abort_touch_after_report_failure(data, ret);
+            }
         }
         else
         {
             /* First frame: sync ON state with zero movement */
-            input_report_rel(data->dev, INPUT_REL_X, 0, true, K_FOREVER);
+            ret = input_report_rel(data->dev, INPUT_REL_X, 0, true, K_FOREVER);
+            if (ret < 0)
+            {
+                LOG_ERR("Failed to report initial relative coordinate: %d", ret);
+                return iqs7211e_abort_touch_after_report_failure(data, ret);
+            }
         }
 
         /* 3.5. Update History */
@@ -1694,6 +1768,20 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
     {
         /* --- Path: Touch Released --- */
 
+        const atomic_val_t contact_tap_state = atomic_set(&data->contact_tap_state, 0);
+        const bool release_was_scroll = (contact_tap_state & 2) ||
+            iqs7211e_scroll_layer_active(config);
+        const bool release_has_tap = iqs7211e_is_tap_gesture(gesture_event);
+        int release_error = 0;
+
+        if (iqs7211e_runtime_should_suppress_delayed_scroll_tap(
+                data->suppress_delayed_scroll_tap, false, release_has_tap))
+        {
+            LOG_DBG("Suppressing delayed tap from preceding scroll contact");
+            data->suppress_delayed_scroll_tap = false;
+            gesture_event = IQS7211E_GESTURE_NONE;
+        }
+
         /* 4.1. Touch State Toggle */
         bool released_here = data->last_touched_state;
 
@@ -1701,16 +1789,18 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
         {
             if (iqs7211e_runtime_reports_touch_state(config->report_abs))
             {
-                input_report_key(data->dev, INPUT_BTN_TOUCH, false, false,
-                                 K_FOREVER);
+                ret = input_report_key(data->dev, INPUT_BTN_TOUCH, false, false,
+                                       K_FOREVER);
+                if (ret < 0)
+                {
+                    LOG_ERR("Failed to release touch: %d", ret);
+                    release_error = ret;
+                }
             }
-            data->last_touched_state = false;
-            k_work_cancel_delayable(&data->stationary_report_work);
-            k_work_cancel_delayable(&data->touch_verify_work);
         }
 
         /* 4.2. Process Release Gestures (Taps, etc.) - Only if not scrolling */
-        if (!data->is_scroll_layer_active)
+        if (!release_was_scroll)
         {
             switch (gesture_event)
             {
@@ -1756,25 +1846,54 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
          */
         if (config->report_abs)
         {
-            if (released_here)
+            if (released_here && release_error == 0)
             {
-                input_report_abs(data->dev, INPUT_ABS_X, x, false, K_FOREVER);
-                input_report_abs(data->dev, INPUT_ABS_Y, y, true, K_FOREVER);
+                ret = iqs7211e_report_abs_coordinates(data, x, y);
+                if (ret < 0)
+                {
+                    release_error = ret;
+                }
             }
         }
 
-        /* 4.4. Scroll Layer Cleanup (At the very end of switching) */
-        if (data->is_scroll_layer_active)
+        if (released_here)
         {
-            zmk_keymap_layer_deactivate(config->scroll_layer, false);
-            data->is_scroll_layer_active = false;
-            LOG_DBG("Scroll layer deactivated");
+            data->last_touched_state = false;
+            k_work_cancel_delayable(&data->touch_verify_work);
         }
+
+        /* When a scroll contact ended before the sensor reported its tap
+         * gesture, remember that provenance for exactly one later no-finger
+         * tap. The L6 input processor is no longer selected at that point. */
+        if (iqs7211e_runtime_latch_delayed_scroll_tap(release_was_scroll,
+                                                       release_has_tap))
+        {
+            data->suppress_delayed_scroll_tap = true;
+        }
+
+        /* 4.4. Scroll-slider layer cleanup (at the very end of switching) */
+        if (data->scroll_slider_layer_activated_by_driver)
+        {
+            zmk_keymap_layer_deactivate(config->scroll_slider_layer, false);
+            LOG_DBG("Scroll slider layer deactivated");
+        }
+        data->is_scroll_slider_layer_active = false;
+        data->scroll_slider_layer_activated_by_driver = false;
 
         /* 4.5. Update History */
         data->touch_count = 0;
         data->finger_1_prev_dx = 0;
         data->finger_1_prev_dy = 0;
+
+        /* A failed host report must not leave a driver-owned slider layer or
+         * a periodic work item alive after the physical contact is gone. */
+        if (release_error < 0)
+        {
+            data->touch_release_pending = true;
+            iqs7211e_reschedule_work(&data->click_work,
+                                    K_MSEC(IQS7211E_CLICK_EDGE_MS));
+            return release_error;
+        }
     }
 
     /*
@@ -1791,17 +1910,6 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
     {
         data->finger_1_prev_dx = dx;
         data->finger_1_prev_dy = dy;
-    }
-
-    if (iqs7211e_stationary_chain_alive(data))
-    {
-        iqs7211e_reschedule_work(
-            &data->stationary_report_work,
-            K_MSEC(config->stationary_report_interval_ms));
-    }
-    else
-    {
-        k_work_cancel_delayable(&data->stationary_report_work);
     }
 
     if (iqs7211e_touch_verify_chain_alive(data))
@@ -1834,7 +1942,7 @@ static int set_gpio_interrupt(const struct device *dev, const bool en)
 static void iqs7211e_gpio_callback(const struct device *port, struct gpio_callback *cb, gpio_port_pins_t pins)
 {
     struct iqs7211e_data *data = CONTAINER_OF(cb, struct iqs7211e_data, gpio_cb);
-    data->diagnostic_irq_count++;
+    atomic_inc(&data->diagnostic_irq_count);
     if (atomic_get(&data->suspended))
     {
         return;
@@ -1888,14 +1996,16 @@ static int iqs7211e_init(const struct device *dev)
     }
     data->init_state = IQS7211E_INIT_VERIFY_PRODUCT;
     data->touch_count = 0;
-    data->is_scroll_layer_active = false;
+    data->is_scroll_slider_layer_active = false;
+    data->scroll_slider_layer_activated_by_driver = false;
+    data->suppress_delayed_scroll_tap = false;
     data->last_touched_state = false;
     data->touch_verify_pending = false;
-    data->diagnostic_irq_count = 0;
-    data->diagnostic_work_count = 0;
-    data->diagnostic_report_count = 0;
-    data->diagnostic_rdy_low_count = 0;
-    data->diagnostic_rdy_recovery_count = 0;
+    atomic_clear(&data->diagnostic_irq_count);
+    atomic_clear(&data->diagnostic_work_count);
+    atomic_clear(&data->diagnostic_report_count);
+    atomic_clear(&data->diagnostic_rdy_low_count);
+    atomic_clear(&data->diagnostic_rdy_recovery_count);
     data->diagnostic_last_report_ret = 0;
     data->dev = dev;
     atomic_clear(&data->suspended);
@@ -1905,7 +2015,6 @@ static int iqs7211e_init(const struct device *dev)
 
     iqs7211e_start_work_queue();
     k_work_init(&data->work, iqs7211e_work_handler);
-    k_work_init_delayable(&data->stationary_report_work, iqs7211e_stationary_report_work_handler);
     k_work_init_delayable(&data->touch_verify_work, iqs7211e_touch_verify_work_handler);
     k_work_init_delayable(&data->click_work, iqs7211e_click_work_handler);
     k_work_init_delayable(&data->rdy_recheck_work, iqs7211e_rdy_recheck_work_handler);
@@ -1955,15 +2064,9 @@ static void iqs7211e_restore_after_failed_suspend(struct iqs7211e_data *data)
     atomic_clear(&data->suspended);
     atomic_clear(&data->rdy_recheck_attempts);
 
-    if (data->click_edges > 0)
+    if (data->click_edges > 0 || data->touch_release_pending)
     {
         iqs7211e_reschedule_work(&data->click_work, K_NO_WAIT);
-    }
-    if (iqs7211e_stationary_chain_alive(data))
-    {
-        iqs7211e_reschedule_work(
-            &data->stationary_report_work,
-            K_MSEC(config->stationary_report_interval_ms));
     }
     if (iqs7211e_touch_verify_chain_alive(data))
     {
@@ -2030,8 +2133,6 @@ static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action ac
         }
 
         k_work_cancel_delayable_sync(&data->click_work, &data->click_work_sync);
-        k_work_cancel_delayable_sync(&data->stationary_report_work,
-                                     &data->stationary_report_work_sync);
 
         /* PM actions may run on the system queue too. Route releases through
          * the private queue and wait so input_report() retains K_FOREVER. */
@@ -2103,7 +2204,9 @@ static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action ac
         data->init_state = IQS7211E_INIT_VERIFY_PRODUCT;
         data->reset_called = false;
         data->touch_count = 0;
-        data->is_scroll_layer_active = false;
+        data->is_scroll_slider_layer_active = false;
+        data->scroll_slider_layer_activated_by_driver = false;
+        data->suppress_delayed_scroll_tap = false;
         data->last_touched_state = false;
         data->touch_verify_pending = false;
         data->click_edges = 0;
@@ -2117,17 +2220,23 @@ static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action ac
 }
 #endif // #ifdef CONFIG_PM_DEVICE
 
-#define IQS7211E_SCROLL_TRIGGER_LAYERS(inst)                                                   \
-    COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, scroll_trigger_layers),                             \
-                (static const uint8_t iqs7211e_scroll_trigger_layers_##inst[] =                  \
-                     DT_INST_PROP(inst, scroll_trigger_layers);),                                 \
+#define IQS7211E_SCROLL_SLIDER_TRIGGER_LAYERS(inst)                                            \
+    COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, scroll_slider_trigger_layers),                      \
+                (static const uint8_t iqs7211e_scroll_slider_trigger_layers_##inst[] =           \
+                     DT_INST_PROP(inst, scroll_slider_trigger_layers);),                         \
                 ())
 
-#define IQS7211E_STATIONARY_REPORT_LAYERS(inst)                                                 \
-    COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, stationary_report_layers),                           \
-                (static const uint8_t iqs7211e_stationary_report_layers_##inst[] =                \
-                     DT_INST_PROP(inst, stationary_report_layers);),                               \
-                ())
+/* DTS array cells are wider than the uint8_t storage used by the runtime. */
+#define IQS7211E_VALIDATE_SCROLL_SLIDER_TRIGGER_LAYER_VALUE(idx, inst)                           \
+    BUILD_ASSERT(DT_INST_PROP_BY_IDX(inst, scroll_slider_trigger_layers, idx) <= UINT8_MAX,       \
+                 "scroll-slider-trigger-layers values must fit in uint8_t");                     \
+    BUILD_ASSERT(DT_INST_PROP_BY_IDX(inst, scroll_slider_trigger_layers, idx) <                  \
+                     ZMK_KEYMAP_LAYERS_LEN,                                                       \
+                 "scroll-slider-trigger-layers must name an existing keymap layer");
+
+#define IQS7211E_VALIDATE_SCROLL_SLIDER_TRIGGER_LAYER_VALUES(inst)                               \
+    LISTIFY(DT_INST_PROP_LEN_OR(inst, scroll_slider_trigger_layers, 0),                           \
+            IQS7211E_VALIDATE_SCROLL_SLIDER_TRIGGER_LAYER_VALUE, (;), inst)
 
 /*
  * The coordinate range is written twice: once as the value programmed into the
@@ -2152,27 +2261,44 @@ BUILD_ASSERT(RESOLUTION_Y == ((Y_RESOLUTION_1 << 8) | Y_RESOLUTION_0),
     BUILD_ASSERT(DT_INST_PROP_OR(inst, triple_tap, -1) >= -1 &&                                 \
                      DT_INST_PROP_OR(inst, triple_tap, -1) <= INT8_MAX,                          \
                  "triple-tap must fit in int8_t and be at least -1");                           \
-    BUILD_ASSERT(DT_INST_PROP_OR(inst, scroll_layer, -1) >= -1 &&                               \
-                     DT_INST_PROP_OR(inst, scroll_layer, -1) <= INT8_MAX,                        \
-                 "scroll-layer must fit in int8_t and be at least -1");                         \
+    BUILD_ASSERT(DT_INST_PROP_OR(inst, scroll_slider_layer, -1) >= -1 &&                        \
+                     DT_INST_PROP_OR(inst, scroll_slider_layer, -1) <= INT8_MAX,                 \
+                 "scroll-slider-layer must fit in int8_t and be at least -1");                  \
+    BUILD_ASSERT(DT_INST_PROP_OR(inst, scroll_slider_layer, -1) == -1 ||                         \
+                     DT_INST_PROP_OR(inst, scroll_slider_layer, -1) < ZMK_KEYMAP_LAYERS_LEN,      \
+                 "scroll-slider-layer must name an existing keymap layer");                      \
     BUILD_ASSERT(DT_INST_PROP_OR(inst, scroll_start, 40) >= 0 &&                                \
-                     DT_INST_PROP_OR(inst, scroll_start, 40) <= RESOLUTION_X,                    \
-                 "scroll-start must be within the coordinate range");                          \
+                      DT_INST_PROP_OR(inst, scroll_start, 40) <= RESOLUTION_X,                    \
+                  "scroll-start must be within the coordinate range");                          \
+    BUILD_ASSERT(DT_INST_PROP_LEN_OR(inst, scroll_slider_trigger_layers, 0) <= UINT8_MAX,         \
+                  "scroll-slider-trigger-layers must contain at most 255 layers");              \
+    IQS7211E_VALIDATE_SCROLL_SLIDER_TRIGGER_LAYER_VALUES(inst);                                   \
     BUILD_ASSERT(DT_INST_PROP_OR(inst, jitter_deadband, 8) >= 0 &&                              \
                      DT_INST_PROP_OR(inst, jitter_deadband, 8) <= RESOLUTION_X,                 \
                  "jitter-deadband must be within the coordinate range");                      \
-    BUILD_ASSERT(DT_INST_PROP_OR(inst, stationary_report_interval_ms, 0) >= 0 &&                 \
-                     DT_INST_PROP_OR(inst, stationary_report_interval_ms, 0) <= UINT16_MAX,      \
-                 "stationary-report-interval-ms must fit in uint16_t");                         \
     BUILD_ASSERT(DT_INST_PROP_OR(inst, touch_verify_interval_ms, 120) >= 0 &&                    \
                      DT_INST_PROP_OR(inst, touch_verify_interval_ms, 120) <=                     \
                          UINT16_MAX,                                                             \
                  "touch-verify-interval-ms must fit in uint16_t")
 
+#define IQS7211E_VALIDATE_SCROLL_LAYER(idx, inst)                                               \
+    BUILD_ASSERT(DT_INST_PROP_BY_IDX(inst, scroll_layers, idx) <= UINT8_MAX &&                   \
+        DT_INST_PROP_BY_IDX(inst, scroll_layers, idx) < ZMK_KEYMAP_LAYERS_LEN,                   \
+        "scroll-layers must name existing keymap layer IDs");
+
+#define IQS7211E_SCROLL_LAYERS(inst)                                                            \
+    BUILD_ASSERT(DT_INST_PROP_LEN_OR(inst, scroll_layers, 0) <= UINT8_MAX,                      \
+        "scroll-layers must contain at most 255 layers");                                      \
+    LISTIFY(DT_INST_PROP_LEN_OR(inst, scroll_layers, 0),                                        \
+        IQS7211E_VALIDATE_SCROLL_LAYER, (;), inst)                                             \
+    COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, scroll_layers),                                     \
+        (static const uint8_t iqs7211e_scroll_layers_##inst[] =                                 \
+            DT_INST_PROP(inst, scroll_layers);), ())
+
 #define IQS7211E_DEFINE(inst)                                                                   \
+    IQS7211E_SCROLL_LAYERS(inst);                                                               \
     IQS7211E_VALIDATE(inst);                                                                    \
-    IQS7211E_SCROLL_TRIGGER_LAYERS(inst)                                                        \
-    IQS7211E_STATIONARY_REPORT_LAYERS(inst)                                                     \
+    IQS7211E_SCROLL_SLIDER_TRIGGER_LAYERS(inst)                                                 \
     static struct iqs7211e_data iqs7211e_data_##inst;                                           \
     static const struct iqs7211e_config iqs7211e_config_##inst = {                              \
         .i2c = I2C_DT_SPEC_INST_GET(inst),                                                      \
@@ -2180,19 +2306,20 @@ BUILD_ASSERT(RESOLUTION_Y == ((Y_RESOLUTION_1 << 8) | Y_RESOLUTION_0),
         .single_tap = DT_INST_PROP_OR(inst, single_tap, -1),                                    \
         .double_tap = DT_INST_PROP_OR(inst, double_tap, -1),                                    \
         .triple_tap = DT_INST_PROP_OR(inst, triple_tap, -1),                                    \
-        .scroll_layer = DT_INST_PROP_OR(inst, scroll_layer, -1),                                \
+        .scroll_slider_layer = DT_INST_PROP_OR(inst, scroll_slider_layer, -1),                   \
         .scroll_start = DT_INST_PROP_OR(inst, scroll_start, 40),                                \
-        .scroll_trigger_layers = COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, scroll_trigger_layers), \
-                                             (iqs7211e_scroll_trigger_layers_##inst), (NULL)),   \
-        .scroll_trigger_layer_count = DT_INST_PROP_LEN_OR(inst, scroll_trigger_layers, 0),       \
-        .stationary_report_layers = COND_CODE_1(                                                \
-            DT_INST_NODE_HAS_PROP(inst, stationary_report_layers),                               \
-            (iqs7211e_stationary_report_layers_##inst), (NULL)),                                 \
+        .scroll_slider_trigger_layers = COND_CODE_1(                                            \
+            DT_INST_NODE_HAS_PROP(inst, scroll_slider_trigger_layers),                          \
+            (iqs7211e_scroll_slider_trigger_layers_##inst), (NULL)),                            \
+        .scroll_slider_trigger_layer_count =                                                    \
+            DT_INST_PROP_LEN_OR(inst, scroll_slider_trigger_layers, 0),                         \
         .jitter_deadband = DT_INST_PROP_OR(inst, jitter_deadband, 8),                            \
-        .stationary_report_layer_count = DT_INST_PROP_LEN_OR(inst, stationary_report_layers, 0), \
         .rotate_cw = DT_INST_PROP_OR(inst, rotate_cw, 0),                                       \
-        .report_abs = DT_INST_PROP(inst, report_abs),                                           \
-        .stationary_report_interval_ms = DT_INST_PROP_OR(inst, stationary_report_interval_ms, 0),\
+        /* report-abs is optional: absence selects direct relative reports. */                   \
+        .report_abs = DT_INST_PROP_OR(inst, report_abs, false),                                 \
+        .scroll_layers = COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, scroll_layers),                 \
+            (iqs7211e_scroll_layers_##inst), (NULL)),                                           \
+        .scroll_layer_count = DT_INST_PROP_LEN_OR(inst, scroll_layers, 0),                       \
         .touch_verify_interval_ms =                                                              \
             DT_INST_PROP_OR(inst, touch_verify_interval_ms, 120),                                \
     };                                                                                          \
@@ -2207,3 +2334,28 @@ BUILD_ASSERT(RESOLUTION_Y == ((Y_RESOLUTION_1 << 8) | Y_RESOLUTION_0),
                           NULL);
 
 DT_INST_FOREACH_STATUS_OKAY(IQS7211E_DEFINE)
+
+/* Record even a brief manual scroll activation between sensor reports. */
+#define IQS7211E_NOTE_TAP_LAYER(inst)                                                        \
+    {                                                                                     \
+        struct iqs7211e_data *data = DEVICE_DT_INST_GET(inst)->data;                         \
+        const struct iqs7211e_config *config = DEVICE_DT_INST_GET(inst)->config;             \
+        if (iqs7211e_scroll_layer_active(config))                                            \
+        {                                                                                 \
+            atomic_val_t state = atomic_get(&data->contact_tap_state);                      \
+            while ((state & 1) && !atomic_cas(&data->contact_tap_state, state, state | 2))   \
+            {                                                                             \
+                state = atomic_get(&data->contact_tap_state);                               \
+            }                                                                             \
+        }                                                                                 \
+    }
+
+static int iqs7211e_tap_layer_listener(const zmk_event_t *event)
+{
+    ARG_UNUSED(event);
+    DT_INST_FOREACH_STATUS_OKAY(IQS7211E_NOTE_TAP_LAYER)
+    return ZMK_EV_EVENT_BUBBLE;
+}
+
+ZMK_LISTENER(iqs7211e_tap_layer, iqs7211e_tap_layer_listener);
+ZMK_SUBSCRIPTION(iqs7211e_tap_layer, zmk_layer_state_changed);
