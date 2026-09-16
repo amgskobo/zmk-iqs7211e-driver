@@ -2,12 +2,10 @@
 
 [[日本語]](README_JA.md)
 
-<img src=/img/iqs7211e_trackpad01.png width="500px" />
-
 ## 1. Overview
 
-This repository provides a driver for the **"Trackpad01"** (Azoteq IQS7211E touch/proximity sensor chip) for ZMK (Zephyr Mechanical Keyboard firmware). It has been verified with **Zephyr 4.1**.
-The driver is inspired by the [ZMK PMW3610 driver](https://github.com/inorichi/zmk-pmw3610-driver). While the IQS7211E chip itself supports full 2 fingers input, this small trackpad module **(padsize is 22mmX22mm)** only supports single-finger gestures. Supports standard ZMK interrupt-driven input, enabling responsive event handling.
+This repository provides an Azoteq IQS7211E touch/proximity sensor driver for ZMK (Zephyr Mechanical Keyboard firmware). It has been verified with **Zephyr 4.1**.
+The driver is inspired by the [ZMK PMW3610 driver](https://github.com/inorichi/zmk-pmw3610-driver). It supports standard ZMK interrupt-driven input and single-finger gesture reporting; board-specific panel capabilities and dimensions belong in the board documentation.
 
 The driver implements touch gestures and reports sensor input without owning
 keymap layers or pointer regions:
@@ -30,7 +28,7 @@ keymap layers or pointer regions:
 | `triple-tap` | int | -1 | Button triggered by triple-tap (-1=disabled, 0=BTN_0, 1=BTN_1, 2=BTN_2, ...) |
 | `rotate-cw` | uint | 0 | **CW Rotation angle to match physical placement** (0=0°, 1=90°, 2=180°, 3=270°). Coordinates are normalized before they reach downstream input processors. |
 | `report-abs` | boolean | false | If true, report absolute coordinates instead of relative ones. |
-| `jitter-deadband` | int | 8 | Per-axis coordinate distance held by the rubber-band jitter gate. X and Y are gated independently, not by Euclidean distance. 0 disables the gate and keeps the three-sample median filter. The default is a conservative Trackpad01 starting point; override it after measuring another panel. Valid range: 0-1024. |
+| `jitter-deadband` | int | 8 | Per-axis coordinate distance held by the rubber-band jitter gate. X and Y are gated independently, not by Euclidean distance. 0 disables the gate and keeps the three-sample median filter. Treat the default as a conservative starting point and override it after measuring the panel. Valid range: 0-1024. |
 | `touch-verify-interval-ms` | int | 120 | In both report modes, independently run a full report read at this interval while touch remains active. This provides common stale-contact recovery and is not layer-gated. Set to 0 to use the sensor's 60-second fallback instead. |
 
 ### 2.1 Absolute Pointer Report Mode
@@ -51,7 +49,7 @@ Both absolute and relative reporting use the same stateful coordinate filter: a 
 rubber-band deadband followed by a three-sample median. The driver relies on the sensor's
 on-chip MAV and Dynamic IIR rather than applying a second IIR on the host. All filter state is
 reset at the start of every contact, and a temporarily invalid coordinate holds the previous
-output without advancing the filter. The fixed 22 mm Trackpad01 default is deadband 8; a board
+output without advancing the filter. The default deadband is 8; a board
 only needs an override when its measurements call for it.
 
 ### 2.2 Touch Verification
@@ -79,7 +77,7 @@ Choose configuration in this order instead of selecting isolated values first.
 | 2 | Tap gestures | `single-tap`, `double-tap`, `triple-tap` | `-1` disables a gesture; `0` through `2` select `BTN_0` through `BTN_2`. Leave unneeded gestures disabled. |
 | 3 | Physical orientation | `rotate-cw` | Select `<0>` through `<3>` for the installed orientation. Input-processor edges use the coordinates after this rotation. |
 | 4 | Coordinate mode | `report-abs` | Omit for a direct relative pointer. Set `report-abs;` for processors that consume absolute coordinates, such as absolute-to-relative, padstick, or matrix. That downstream path must consume or suppress `INPUT_BTN_TOUCH`. |
-| 5 | Noise boundary | `jitter-deadband` | Measure from the Trackpad01 default `<8>`. Raise it for stationary jitter, lower it if fine movement is lost. `0` disables only the deadband; the median filter remains. |
+| 5 | Noise boundary | `jitter-deadband` | Measure from the default `<8>`. Raise it for stationary jitter, lower it if fine movement is lost. `0` disables only the deadband; the median filter remains. |
 | 6 | Edge routing | downstream input processors | Use `zmk-input-temp-layer-touch` for side sliders. Put it before absolute-to-relative conversion on every route. |
 | 7 | Contact liveness | `touch-verify-interval-ms` | Normally retain `<120>`. It independently releases stale contacts after a read failure or no-finger report. Set `<0>` only when deliberately relying on the sensor's 60-second fallback. |
 
@@ -130,7 +128,7 @@ This ensures GitHub Actions pulls the **IQS7211E driver** automatically during t
 
 ### 3.2 Configure Device Tree Overlay
 
-Add the IQS7211E node in your keyboard DTS overlay file (example of XIAO_BLE board):
+Add the IQS7211E node in your keyboard DTS overlay file:
 
 ```dts
 #include <input/processors.dtsi>
@@ -249,13 +247,9 @@ keymap, GitHub Actions, and validation setup.
 
 ## 4. HW and Dimensions
 
-### 4.1 Trackpad01 Front view (HASL)
+### 4.1 Reference panel front
 
-<img src=/img/iqs7211e_trackpad01_front.png width="500px" />
-
-### 4.2 Trackpad01 Back view (HASL)
-
-<img src=/img/iqs7211e_trackpad01_back.png width="500px" />
+### 4.2 Reference panel back
 
 ### 4.3 Pin Assignment (all +3V3 logic)
 

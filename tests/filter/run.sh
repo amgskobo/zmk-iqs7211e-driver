@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Copyright (c) 2026 @amgskobo
+# Copyright (c) 2026 amgskobo
 #
 # SPDX-License-Identifier: MIT
 
