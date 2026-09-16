@@ -157,6 +157,17 @@ static void iqs7211e_schedule_rdy_recheck(struct iqs7211e_data *data)
     }
 }
 
+static void iqs7211e_retry_rdy_recheck(struct iqs7211e_data *data)
+{
+    atomic_val_t attempts = atomic_get(&data->rdy_recheck_attempts);
+
+    if (attempts < IQS7211E_RDY_FAST_RECHECK_LIMIT)
+    {
+        atomic_inc(&data->rdy_recheck_attempts);
+    }
+    iqs7211e_schedule_rdy_recheck(data);
+}
+
 static int iqs7211e_enable_interrupt_and_recheck(struct iqs7211e_data *data)
 {
     int ret = set_gpio_interrupt(data->dev, true);
@@ -1162,6 +1173,7 @@ static void iqs7211e_rdy_recheck_work_handler(struct k_work *work)
     if (rdy_active < 0)
     {
         LOG_WRN("Failed to recheck IQS7211E RDY level: %d", rdy_active);
+        iqs7211e_retry_rdy_recheck(data);
         return;
     }
     if (rdy_active == 0)
@@ -1184,6 +1196,7 @@ static void iqs7211e_rdy_recheck_work_handler(struct k_work *work)
 
     if (set_gpio_interrupt(data->dev, false) < 0)
     {
+        iqs7211e_retry_rdy_recheck(data);
         iqs7211e_note_work_queue_stack_usage();
         return;
     }
@@ -2051,8 +2064,17 @@ static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action ac
         data->click_edges = 0;
         atomic_clear(&data->suspended);
         atomic_clear(&data->rdy_recheck_attempts);
-        LOG_DBG("IQS7211E device resumed ");
-        return iqs7211e_enable_interrupt_and_recheck(data);
+        LOG_DBG("IQS7211E device resumed");
+        ret = iqs7211e_enable_interrupt_and_recheck(data);
+        if (ret < 0)
+        {
+            /* GPIO controllers can resume after this device. Keep the PM
+             * transition successful and let the private queue retry until
+             * the RDY interrupt can be armed again. */
+            iqs7211e_retry_rdy_recheck(data);
+            return 0;
+        }
+        return 0;
     default:
         return -ENOTSUP;
     }
