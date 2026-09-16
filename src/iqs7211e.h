@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 @amgskobo
+ * Copyright (c) 2025 amgskobo
  *
  * SPDX-License-Identifier: MIT
  */

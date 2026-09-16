@@ -55,7 +55,7 @@ properties:
       before motion is reported. This is applied independently to X and Y, not
       as a Euclidean radius. The three-sample median filter remains active when
       this is 0. The default of 8 is a conservative starting point for the
-      Trackpad01 panel; override it from the board overlay when measurements
+      reference panel; override it from the board overlay when measurements
       show a different stationary-jitter/fine-motion boundary. The normalized
       coordinate range is 0-1024 inclusive.
   touch-verify-interval-ms:

@@ -24,11 +24,11 @@ peripheral build.
 ```yaml
 ---
 include:
-  - board: nice_nano//zmk
+  - board: <central-board>
     shield: your_keyboard_left
     snippet: studio-rpc-usb-uart
     cmake-args: -DCONFIG_ZMK_STUDIO=y
-  - board: nice_nano//zmk
+  - board: <peripheral-board>
     shield: your_keyboard_right
 ```
 
@@ -39,7 +39,7 @@ behaviors; change those in the configuration and rebuild the firmware.
 For a local central-side build, the equivalent is:
 
 ```sh
-west build -d build/studio -b nice_nano//zmk \
+west build -d build/studio -b <central-board> \
   -S studio-rpc-usb-uart -- -DSHIELD=your_keyboard_left -DCONFIG_ZMK_STUDIO=y
 ```
 

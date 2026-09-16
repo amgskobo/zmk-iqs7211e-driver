@@ -2,13 +2,11 @@
 
 [[English]](README.md)
 
-<img src=/img/iqs7211e_trackpad01.png width="500px" />
-
 ## 1. 概要
 
-このリポジトリは、**"Trackpad01"** (Azoteq IQS7211E タッチ/プロキシミティセンサチップ) 用の ZMK (Zephyr Mechanical Keyboard) ドライバーを提供します。**Zephyr 4.1** で動作確認済みです。
+このリポジトリは、Azoteq IQS7211E タッチ／プロキシミティセンサ用の ZMK (Zephyr Mechanical Keyboard) ドライバーを提供します。**Zephyr 4.1** で動作確認済みです。
 
-このドライバーは [ZMK PMW3610 driver](https://github.com/inorichi/zmk-pmw3610-driver) から着想を得ています。IQS7211E チップ自体は 2 本指入力をフルサポートしていますが、この小型トラックパッドモジュール **(パッドサイズ 22mm x 22mm)** は、シングルフィンガージェスチャーのみをサポートします。標準的な ZMK の割り込み駆動入力をサポートし、レスポンスの良いイベント処理を実現しています。
+このドライバーは [ZMK PMW3610 driver](https://github.com/inorichi/zmk-pmw3610-driver) から着想を得ています。標準的な ZMK の割り込み駆動入力とシングルフィンガージェスチャー報告に対応します。panelの機能や寸法はboard側の文書で管理します。
 
 このdriverはkeymap layerやpad領域を所有せず、sensor入力と以下の機能を提供します。
 
@@ -28,7 +26,7 @@
 | `triple-tap` | int | -1 | トリプルタップでトリガーされるボタン (-1=無効, 0=BTN_0, 1=BTN_1, ...) |
 | `rotate-cw` | uint | 0 | **物理配置に合わせた時計回りの回転角度** (0=0°, 1=90°, 2=180°, 3=270°)。driver内部で座標変換を行います。 |
 | `report-abs` | boolean | false | true の場合、相対座標ではなく絶対座標を報告します。 |
-| `jitter-deadband` | int | 8 | ラバーバンド式ジッタゲートが保持する軸ごとの座標差。X/Yへ独立に適用し、ユークリッド距離では判定しません。0ではゲートだけを無効にし、3サンプル中央値フィルターは維持します。既定値はTrackpad01向けの保守的な開始値で、別パネルでは実測後に上書きします。有効範囲は0～1024です。 |
+| `jitter-deadband` | int | 8 | ラバーバンド式ジッタゲートが保持する軸ごとの座標差。X/Yへ独立に適用し、ユークリッド距離では判定しません。0ではゲートだけを無効にし、3サンプル中央値フィルターは維持します。既定値は保守的な開始値として扱い、panelの実測後に上書きします。有効範囲は0～1024です。 |
 | `touch-verify-interval-ms` | int | 120 | 絶対・相対の両モードで、タッチ継続中に通常レポートをこの周期で1回読みます。古い接触の復旧を両モードで共通化し、レイヤー制限は受けません。0ではホスト側verifyを無効化し、チップ側の60秒fallbackを使います。 |
 
 ### 2.1 絶対座標レポートモード
@@ -41,7 +39,7 @@
 
 絶対モードと相対モードは、設定可能なラバーバンドdeadbandと3サンプル中央値から成る同じ座標フィルターを使います。一時的な無効座標は直前の出力を保持し、フィルター履歴も進めません。平滑化はチップ内MAVとDynamic IIRに任せ、ホスト側でIIRを重ねません。すべてのフィルター状態は接触開始ごとに初期化されます。
 
-フィルター設定はビルド時のDevice Treeプロパティです。bindingが既定値を定義し、選択値を読み取り専用のdevice configへ格納し、接触ごとに変化するフィルター状態はdevice dataへ分離します。固定の22 mm Trackpad01向けdriver既定値は`jitter-deadband = 8`です。絶対・相対座標へ分岐する前に同じ処理を適用し、別の値が必要なボードだけoverlayで上書きします。
+フィルター設定はビルド時のDevice Treeプロパティです。bindingが既定値を定義し、選択値を読み取り専用のdevice configへ格納し、接触ごとに変化するフィルター状態はdevice dataへ分離します。driver既定値は`jitter-deadband = 8`です。絶対・相対座標へ分岐する前に同じ処理を適用し、別の値が必要なboardだけoverlayで上書きします。
 
 ### 2.2 タッチ確認
 
@@ -63,7 +61,7 @@
 | 2 | タップ操作を決める | `single-tap`, `double-tap`, `triple-tap` | 各値は `-1` で無効、`0`～`2` で `BTN_0`～`BTN_2`。不要なジェスチャーは明示的に無効のままにします。 |
 | 3 | 座標の向きを決める | `rotate-cw` | 実装方向に合わせて `<0>`、`<1>`、`<2>`、`<3>` を選びます。Input Processorのedge指定は回転後の座標に対して行います。 |
 | 4 | 座標方式を決める | `report-abs` | 直接相対ポインタなら省略します。absolute-to-relative、padstick、matrixなど絶対座標を受けるInput Processorを使うなら `report-abs;` を設定します。その場合、下流で `INPUT_BTN_TOUCH` を消費または抑制します。 |
-| 5 | ノイズ境界を決める | `jitter-deadband` | まずTrackpad01の既定値 `<8>` で測定します。静止時の揺れが残るなら増やし、微小移動が失われるなら減らします。`0` はdeadbandだけを無効にし、中央値フィルターは残ります。 |
+| 5 | ノイズ境界を決める | `jitter-deadband` | まず既定値 `<8>` で測定します。静止時の揺れが残るなら増やし、微小移動が失われるなら減らします。`0` はdeadbandだけを無効にし、中央値フィルターは残ります。 |
 | 6 | edge routingを決める | 下流のInput Processor | side sliderには`zmk-input-temp-layer-touch`を使い、absolute-to-relative変換より前の全routeへ配置します。 |
 | 7 | 接触の生存確認を決める | `touch-verify-interval-ms` | 通常は既定値 `<120>` を維持します。これは読み取り失敗または指なしを検出した時に古い接触をreleaseします。チップの60秒fallbackだけを使うと決めた場合だけ `<0>` にします。 |
 
@@ -106,7 +104,7 @@ manifest:
 
 ### 3.2 デバイスツリーオーバーレイの設定
 
-キーボードの DTS オーバーレイファイルに IQS7211E ノードを追加します (XIAO_BLE ボードの例)：
+キーボードの DTS オーバーレイファイルに IQS7211E ノードを追加します：
 
 ```dts
 #include <input/processors.dtsi>
@@ -214,11 +212,11 @@ chain の設定は firmware 側に保持し、通常キーの binding を Studio
 
 ## 4. ハードウェアと寸法
 
-### 4.1 Trackpad01 前面図 (HASL)
+### 4.1 参考panel前面
 
 <img src=/img/iqs7211e_trackpad01_front.png width="500px" />
 
-### 4.2 Trackpad01 背面図 (HASL)
+### 4.2 参考panel背面
 
 <img src=/img/iqs7211e_trackpad01_back.png width="500px" />
 
@@ -278,7 +276,7 @@ Azoteq が提供する `src/iqs7211e_init.h` ファイルを編集すること�
 
 ## 5. 座標パイプライン
 
-この節は、実装を変更する開発者やエージェント向けの保守資料です。ドライバーが座標をどう扱うか、各設定が何と何を引き換えにしているか、固定の22 mm Trackpad01プロファイルをどう検証するかをまとめます。
+この節は、実装を変更する開発者やエージェント向けの保守資料です。ドライバーが座標をどう扱うか、各設定が何と何を引き換えにしているか、panelごとのprofileをどう検証するかをまとめます。
 
 ### 5.1 処理段の構成
 
@@ -300,7 +298,7 @@ Azoteq が提供する `src/iqs7211e_init.h` ファイルを編集すること�
 |---|---:|---|
 | ラバーバンド幅 | 8 | `jitter-deadband` |
 
-bindingの既定値、`struct iqs7211e_config`の型、`DT_INST_PROP_OR`のfallbackは一致させます。固定の22 mm Trackpad01向けdriver既定値は`jitter-deadband = 8`です。パネル、電極、表面材などのハードウェア構成を変更する場合だけ再測定し、必要な値をboard overlayで上書きします。
+bindingの既定値、`struct iqs7211e_config`の型、`DT_INST_PROP_OR`のfallbackは一致させます。driver既定値は`jitter-deadband = 8`です。panel、電極、表面材などのハードウェア構成に合わせて実測し、必要な値をboard overlayで上書きします。
 
 deadband履歴や中央値履歴などの可変状態は`struct iqs7211e_data`に置き、読み取り専用のdevice configと混ぜません。
 
