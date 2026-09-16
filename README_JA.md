@@ -214,11 +214,7 @@ chain の設定は firmware 側に保持し、通常キーの binding を Studio
 
 ### 4.1 参考panel前面
 
-<img src=/img/iqs7211e_trackpad01_front.png width="500px" />
-
 ### 4.2 参考panel背面
-
-<img src=/img/iqs7211e_trackpad01_back.png width="500px" />
 
 ### 4.3 ピンアサイン (すべて +3.3V ロジック)
 

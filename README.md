@@ -2,8 +2,6 @@
 
 [[日本語]](README_JA.md)
 
-<img src=/img/iqs7211e_trackpad01.png width="500px" />
-
 ## 1. Overview
 
 This repository provides an Azoteq IQS7211E touch/proximity sensor driver for ZMK (Zephyr Mechanical Keyboard firmware). It has been verified with **Zephyr 4.1**.
@@ -251,11 +249,7 @@ keymap, GitHub Actions, and validation setup.
 
 ### 4.1 Reference panel front
 
-<img src=/img/iqs7211e_trackpad01_front.png width="500px" />
-
 ### 4.2 Reference panel back
-
-<img src=/img/iqs7211e_trackpad01_back.png width="500px" />
 
 ### 4.3 Pin Assignment (all +3V3 logic)
 
