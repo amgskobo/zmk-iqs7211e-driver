@@ -271,9 +271,8 @@ Azoteq が提供する `src/iqs7211e_init.h` ファイルを編集すること�
 
 詳細は以下のデータシートおよびリファレンスを参照してください：
 
-- [iqs7211e_datasheet](/docs/iqs7211e_datasheet.pdf)
-- [azd123_iqs721xy_trackpad_userguide](/docs/azd123_iqs721xy_trackpad_userguide.pdf)
-- [azd128-gamepad-trackpad-design-guide_v1.0](/docs/azd128-gamepad-trackpad-design-guide_v1.0.pdf)
+- 最新版はAzoteq公式の[IQS7211E製品ページ](https://www.azoteq.com/product/iqs7211e/)と
+  [Application Notes一覧](https://www.azoteq.com/design/application-notes/)を参照してください。
 
 座標処理を変更するときは、以下の「座標パイプライン」も参照してください。
 
@@ -360,6 +359,5 @@ AZD128 6.4の基準は、両軸で座標0と最大解像度へ到達できるこ
 
 ### 5.6 参照箇所
 
-- [IQS7211E Datasheet](/docs/iqs7211e_datasheet.pdf): 5.5.1、5.6、5.7、7.5、7.8、11.9、Appendix A
-- [AZD123 IQS721xy Trackpad User Guide](/docs/azd123_iqs721xy_trackpad_userguide.pdf): 4.2、4.3、4.6、5.2、5.3、5.6
-- [AZD128 Gamepad Trackpad Design Guide](/docs/azd128-gamepad-trackpad-design-guide_v1.0.pdf): 5.5、6.2、6.3、6.4
+- [IQS7211E製品ページ](https://www.azoteq.com/product/iqs7211e/): Datasheet、AZD123
+- [Application Notes一覧](https://www.azoteq.com/design/application-notes/): AZD128

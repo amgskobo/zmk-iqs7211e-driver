@@ -304,8 +304,6 @@ Edit values here to adjust:
 - Hardware and ALP settings
 - Channel allocation and cycles
 
-For more details, looking at the datasheet&references:
-
-- [iqs7211e_datasheet](/docs/iqs7211e_datasheet.pdf)
-- [azd123_iqs721xy_trackpad_userguide](/docs/azd123_iqs721xy_trackpad_userguide.pdf)
-- [azd128-gamepad-trackpad-design-guide_v1.0](/docs/azd128-gamepad-trackpad-design-guide_v1.0.pdf)
+For the current datasheet and design references, use Azoteq's official
+[IQS7211E product page](https://www.azoteq.com/product/iqs7211e/) and
+[application-notes index](https://www.azoteq.com/design/application-notes/).
