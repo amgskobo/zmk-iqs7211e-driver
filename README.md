@@ -9,14 +9,14 @@
 This repository provides a driver for the **"Trackpad01"** (Azoteq IQS7211E touch/proximity sensor chip) for ZMK (Zephyr Mechanical Keyboard firmware). It has been verified with **Zephyr 4.1**.
 The driver is inspired by the [ZMK PMW3610 driver](https://github.com/inorichi/zmk-pmw3610-driver). While the IQS7211E chip itself supports full 2 fingers input, this small trackpad module **(padsize is 22mmX22mm)** only supports single-finger gestures. Supports standard ZMK interrupt-driven input, enabling responsive event handling.
 
-The driver also implements touch gesture and scroll slider features:
+The driver implements touch gestures and reports sensor input without owning
+keymap layers or pointer regions:
 
 - Single-tap / Double-tap / Triple-tap
-- Scroll slider (right-edge area)
-  - Activates a dedicated, driver-owned layer while touching (for example,
-    `scroll-slider-layer = <6>`)
-  - Releases to off the layer
-- Precise rotation correction (`rotate-cw`) for flexible physical placement, including automatic slider area adjustment. **Eliminates the need for manual rotation/flipping in input processors.**
+- Precise rotation correction (`rotate-cw`) for flexible physical placement.
+- Edge sliders can be added downstream with
+  [`zmk-input-temp-layer-touch`](https://github.com/amgskobo/zmk-input-temp-layer-touch),
+  including independent left and right pads and delayed-tap suppression.
 - "Ultimate Quality" Rigor: Implemented mathematical boundary fixes (Off-by-one) and safe PM (Power Management) execution guards.
 
 ## 2. Device Tree Properties
@@ -28,11 +28,7 @@ The driver also implements touch gesture and scroll slider features:
 | `single-tap` | int | -1 | Button triggered by single-tap (-1=disabled, 0=BTN_0, 1=BTN_1, 2=BTN_2, ...) |
 | `double-tap` | int | -1 | Button triggered by double-tap (-1=disabled, 0=BTN_0, 1=BTN_1, 2=BTN_2, ...) |
 | `triple-tap` | int | -1 | Button triggered by triple-tap (-1=disabled, 0=BTN_0, 1=BTN_1, 2=BTN_2, ...) |
-| `scroll-slider-layer` | int | -1 | Driver-exclusive existing keymap layer ID activated while first touching the right-edge scroll slider area (-1=disabled). Do not also activate it from a key binding, macro, or other behavior. |
-| `scroll-start` | uint | 40 | Threshold/padding from right edge to activate scroll slider (resolution 0-1024 inclusive) |
-| `scroll-layers` | array | none | Existing manual-scroll layer IDs. The driver monitors them but never activates or deactivates them. Contacts visiting any listed layer suppress taps through release, including one delayed no-finger tap. |
-| `scroll-slider-trigger-layers` | array | any | Highest active layers that may activate `scroll-slider-layer`. If omitted, any layer may trigger it. |
-| `rotate-cw` | uint | 0 | **CW Rotation angle to match physical placement** (0=0°, 1=90°, 2=180°, 3=270°). Coordinates and scroll area are normalized internally. |
+| `rotate-cw` | uint | 0 | **CW Rotation angle to match physical placement** (0=0°, 1=90°, 2=180°, 3=270°). Coordinates are normalized before they reach downstream input processors. |
 | `report-abs` | boolean | false | If true, report absolute coordinates instead of relative ones. |
 | `jitter-deadband` | int | 8 | Per-axis coordinate distance held by the rubber-band jitter gate. X and Y are gated independently, not by Euclidean distance. 0 disables the gate and keeps the three-sample median filter. The default is a conservative Trackpad01 starting point; override it after measuring another panel. Valid range: 0-1024. |
 | `touch-verify-interval-ms` | int | 120 | In both report modes, independently run a full report read at this interval while touch remains active. This provides common stale-contact recovery and is not layer-gated. Set to 0 to use the sensor's 60-second fallback instead. |
@@ -64,7 +60,7 @@ only needs an override when its measurements call for it.
 
 Every full report also checks the sensor's `Show Reset` flag. If the IQS7211E
 watchdog or a sensor-only power interruption resets the part after start-up,
-the driver first releases any active click, touch, and automatic scroll layer,
+the driver first releases any active click and touch,
 then restores the application settings, acknowledges the reset, runs ATI, and
 re-enables Event Mode. No coordinates or gestures from the reset packet are
 forwarded.
@@ -73,43 +69,25 @@ The check is a full report read, not a bare `INFO_FLAGS` poll. A partial read fo
 
 When host verification is active, the driver programs the chip's Idle-Touch timeout to 0 so the chip cannot reseed underneath a touch the host still owns. When the verify interval is 0, the chip's 60-second timeout remains enabled as the stuck-touch fallback in either report mode.
 
-### 2.3 Scroll Layer Trigger Control
+### 2.3 Configuration Design Procedure
 
-`scroll-slider-layer` selects the driver-owned layer activated while the scroll slider area is touched. `scroll-slider-trigger-layers` limits where that automatic activation is allowed. `scroll-layers` lists keymap-owned manual scroll layers that the driver monitors without changing.
-
-The driver checks the highest active ZMK layer when a touch starts near the scroll slider area. If that layer is listed in `scroll-slider-trigger-layers`, the driver activates `scroll-slider-layer`. If the current highest active layer is not listed, the touch is handled normally and the slider layer is not activated.
-
-Example:
-
-```dts
-scroll-slider-layer = <6>;
-scroll-start = <50>;
-scroll-slider-trigger-layers = <0>;
-scroll-layers = <2 3>;
-```
-
-In this example, layer 6 is used as the scroll layer, but it can only be triggered from layer 0. This is useful when another layer, such as a padstick or mouse-only layer, should keep the full pad area available without the right edge entering the scroll layer.
-
-If `scroll-slider-trigger-layers` is omitted, the driver keeps the previous behavior and allows any layer to trigger `scroll-slider-layer`.
-
-### 2.4 Configuration Design Procedure
-
-Choose configuration in this order instead of selecting isolated values first. This keeps driver-owned layers, keymap-owned layers, and input-processor coordinate conversion separate.
+Choose configuration in this order instead of selecting isolated values first.
 
 | Step | Decide | Properties | Selection rule and constraint |
 |---|---|---|---|
 | 1 | Wire connection | `reg`, `irq-gpios` | Required. Use the board I2C address and RDY interrupt GPIO from the schematic. |
 | 2 | Tap gestures | `single-tap`, `double-tap`, `triple-tap` | `-1` disables a gesture; `0` through `2` select `BTN_0` through `BTN_2`. Leave unneeded gestures disabled. |
-| 3 | Physical orientation | `rotate-cw` | Select `<0>` through `<3>` for the installed orientation. The driver rotates coordinates and the right-edge slider together; do not duplicate that rotation in an input processor. |
+| 3 | Physical orientation | `rotate-cw` | Select `<0>` through `<3>` for the installed orientation. Input-processor edges use the coordinates after this rotation. |
 | 4 | Coordinate mode | `report-abs` | Omit for a direct relative pointer. Set `report-abs;` for processors that consume absolute coordinates, such as absolute-to-relative, padstick, or matrix. That downstream path must consume or suppress `INPUT_BTN_TOUCH`. |
 | 5 | Noise boundary | `jitter-deadband` | Measure from the Trackpad01 default `<8>`. Raise it for stationary jitter, lower it if fine movement is lost. `0` disables only the deadband; the median filter remains. |
-| 6 | Right-edge slider | `scroll-slider-layer`, `scroll-start`, `scroll-slider-trigger-layers` | If used, assign `scroll-slider-layer` an exclusive layer that no key binding, macro, or behavior activates. `scroll-start` is its right-edge width; start at `<40>` and tune. Add trigger layers only to restrict the highest active layer that may enter slider mode. |
-| 7 | Manual scrolling | `scroll-layers` | List only keymap-owned manual-scroll layers. The driver observes but never changes them. Do not repeat `scroll-slider-layer`. A contact visiting one suppresses its tap and one delayed post-release tap. |
-| 8 | Contact liveness | `touch-verify-interval-ms` | Normally retain `<120>`. It independently releases stale contacts after a read failure or no-finger report. Set `<0>` only when deliberately relying on the sensor's 60-second fallback. |
+| 6 | Edge routing | downstream input processors | Use `zmk-input-temp-layer-touch` for side sliders. Put it before absolute-to-relative conversion on every route. |
+| 7 | Contact liveness | `touch-verify-interval-ms` | Normally retain `<120>`. It independently releases stale contacts after a read failure or no-finger report. Set `<0>` only when deliberately relying on the sensor's 60-second fallback. |
 
-After choosing the design, exercise normal pointer movement, the right-edge slider, every manual scroll layer, every tap, a delayed tap after layer release, a stationary contact, and suspend/resume on hardware. Before building, check that DTS property names and layer IDs match the input-processor listener layers.
+After choosing the design, exercise normal pointer movement, every configured
+input-processor edge, every tap, a delayed tap after layer release, a stationary
+contact, and suspend/resume on hardware.
 
-### 2.5 Filter Tests
+### 2.4 Filter Tests
 
 The standalone host tests cover deadband behavior, spike rejection, contact reset, invalid
 frames, zero-delta relative velocity behavior, absolute/relative coordinate parity, runtime
@@ -195,11 +173,6 @@ Add the IQS7211E node in your keyboard DTS overlay file (example of XIAO_BLE boa
         double-tap = <0>;
         triple-tap = <0>;
 
-        /* Scroll slider settings */
-        scroll-slider-layer = <1>;
-        scroll-start = <27>;
-        // scroll-slider-trigger-layers = <0>; // optional: only these highest active layers may enter slider mode
-        // scroll-layers = <2 3>; // optional: keymap-owned manual scroll layers; do not include layer 1
         rotate-cw = <0>;
         // report-abs; // Use absolute coordinates (0-1024 inclusive)
         // touch-verify-interval-ms = <120>; // optional: layer-independent touch verify
@@ -218,15 +191,6 @@ Add the IQS7211E node in your keyboard DTS overlay file (example of XIAO_BLE boa
             input-processors = <&zip_xy_scaler 1 20>,
                                <&zip_xy_to_scroll_mapper>;
         };
-        /* If scroll-layers is set above, add a matching listener entry with
-         * the intended manual-scroll processor chain, for example:
-         *
-         * manual_scroller {
-         *     layers = <2 3>;
-         *     input-processors = <&zip_xy_scaler 1 20>,
-         *                        <&zip_xy_to_scroll_mapper>;
-         * };
-         */
     };
 };
 ```

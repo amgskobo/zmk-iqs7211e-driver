@@ -8,8 +8,7 @@ source = (root / "src/iqs7211e.c").read_text()
 names = ["iqs7211e_report_abs_coordinates", "iqs7211e_release_click",
          "iqs7211e_release_touch", "iqs7211e_begin_runtime_reinitialization",
          "iqs7211e_click_work_handler", "iqs7211e_report_rel_coordinates",
-         "iqs7211e_abort_touch_after_report_failure", "iqs7211e_scroll_layer_active",
-         "iqs7211e_layer_allowed",
+         "iqs7211e_abort_touch_after_report_failure",
          "iqs7211e_touch_verify_chain_alive",
          "iqs7211e_report_data"]
 functions = []
@@ -22,9 +21,6 @@ for name in names:
         raise RuntimeError(name)
     end = source.index("\n}\n", match.end()) + 3
     functions.append(source[match.start():end])
-callback_start = source.index("#define IQS7211E_NOTE_TAP_LAYER(inst)")
-callback_end = source.index("\nZMK_LISTENER(iqs7211e_tap_layer", callback_start)
-functions.append(source[callback_start:callback_end])
 harness = (root / "tests/runtime/harness.c").read_text()
 with tempfile.TemporaryDirectory(prefix="iqs-runtime-") as folder:
     unit = pathlib.Path(folder) / "test.c"

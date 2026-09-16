@@ -10,13 +10,11 @@
 
 このドライバーは [ZMK PMW3610 driver](https://github.com/inorichi/zmk-pmw3610-driver) から着想を得ています。IQS7211E チップ自体は 2 本指入力をフルサポートしていますが、この小型トラックパッドモジュール **(パッドサイズ 22mm x 22mm)** は、シングルフィンガージェスチャーのみをサポートします。標準的な ZMK の割り込み駆動入力をサポートし、レスポンスの良いイベント処理を実現しています。
 
-また、以下のタッチジェスチャーとスクロールスライダー機能を実装しています：
+このdriverはkeymap layerやpad領域を所有せず、sensor入力と以下の機能を提供します。
 
 - シングルタップ / ダブルタップ / トリプルタップ
-- スクロールスライダー (右端エリア)
-  - タッチ中にドライバー専用レイヤーをアクティブにします（例: `scroll-slider-layer = <6>`）
-  - 離すとレイヤーをオフにします
-- 時計回りの回転補正 (`rotate-cw`): スクロールエリアの自動追従を含む、高精度な座標変換。**インプットプロセッサー側での座標変換（回転・反転）を不要にします。**
+- 時計回りの回転補正 (`rotate-cw`)
+- edge sliderは下流の[`zmk-input-temp-layer-touch`](https://github.com/amgskobo/zmk-input-temp-layer-touch)で追加できます。左右padの独立処理と遅延tap抑制に対応します。
 - 「最奥」クオリティの堅牢性: 境界値の数学的厳密化 (Off-by-one Fix) および PM (電源管理) 時の安全な通信停止を実装。
 
 ## 2. デバイスツリーのプロパティ
@@ -28,11 +26,7 @@
 | `single-tap` | int | -1 | シングルタップでトリガーされるボタン (-1=無効, 0=BTN_0, 1=BTN_1, ...) |
 | `double-tap` | int | -1 | ダブルタップでトリガーされるボタン (-1=無効, 0=BTN_0, 1=BTN_1, ...) |
 | `triple-tap` | int | -1 | トリプルタップでトリガーされるボタン (-1=無効, 0=BTN_0, 1=BTN_1, ...) |
-| `scroll-slider-layer` | int | -1 | 右端のスクロールスライダーエリアをタッチした時にアクティブになる、ドライバー専用の既存 keymap layer ID (-1=無効)。同じ層を key binding、macro、他の behavior から有効化してはいけません。 |
-| `scroll-start` | uint | 40 | スクロールスライダーを有効にする右端からの閾値/パディング (解像度 0-1024、最大値を含む) |
-| `scroll-layers` | array | なし | 手動スクロール用の既存レイヤー ID。ドライバーは状態を監視するだけで、有効・無効は変更しません。接触開始時または接触中に指定層が有効なら、解除後の遅延した指なし tap 1 件まで共通処理で抑止します。 |
-| `scroll-slider-trigger-layers` | array | any | `scroll-slider-layer` を自動有効化してよい highest active layer。省略時はどのレイヤーでも有効化します。 |
-| `rotate-cw` | uint | 0 | **物理配置に合わせた時計回りの回転角度** (0=0°, 1=90°, 2=180°, 3=270°)。ドライバ内部でスクロールエリア判定も含めて一括して座標変換を行います。 |
+| `rotate-cw` | uint | 0 | **物理配置に合わせた時計回りの回転角度** (0=0°, 1=90°, 2=180°, 3=270°)。driver内部で座標変換を行います。 |
 | `report-abs` | boolean | false | true の場合、相対座標ではなく絶対座標を報告します。 |
 | `jitter-deadband` | int | 8 | ラバーバンド式ジッタゲートが保持する軸ごとの座標差。X/Yへ独立に適用し、ユークリッド距離では判定しません。0ではゲートだけを無効にし、3サンプル中央値フィルターは維持します。既定値はTrackpad01向けの保守的な開始値で、別パネルでは実測後に上書きします。有効範囲は0～1024です。 |
 | `touch-verify-interval-ms` | int | 120 | 絶対・相対の両モードで、タッチ継続中に通常レポートをこの周期で1回読みます。古い接触の復旧を両モードで共通化し、レイヤー制限は受けません。0ではホスト側verifyを無効化し、チップ側の60秒fallbackを使います。 |
@@ -53,49 +47,29 @@
 
 `touch-verify-interval-ms` は、絶対・相対の両モードで、タッチ継続中に物理タッチが残っているかを独立して確認します。IQS7211E の Event Modeでは、指を止めると新しい割り込みが発生しないことがあるため、この通常レポートの全読出しで、edgeが届かない間の物理releaseやI2C障害を検出します。読み取りに失敗した場合やセンサーが指なしを報告した場合、ドライバーは古い接触をreleaseします。デフォルトは120 msです。チップの60秒fallbackだけを使うと決めた場合のみ0にしてください。
 
-通常のfull reportでは、センサーの `Show Reset` flagも毎回確認します。起動後にIQS7211Eのwatchdogまたはセンサー単体の電源断でresetした場合、activeなclick、touch、自動scroll layerを先にreleaseし、アプリケーション設定の再書き込み、reset ACK、ATI、Event Mode再有効化を順番に行います。resetを示したpacketの座標やgestureは下流へ渡しません。
+通常のfull reportでは、センサーの `Show Reset` flagも毎回確認します。起動後にIQS7211Eのwatchdogまたはセンサー単体の電源断でresetした場合、activeなclickとtouchを先にreleaseし、アプリケーション設定の再書き込み、reset ACK、ATI、Event Mode再有効化を順番に行います。resetを示したpacketの座標やgestureは下流へ渡しません。
 
 この確認は `INFO_FLAGS` だけの読み取りではなく、通常のレポート経路を1回丸ごと通します。部分的に読んで STOP すると、ジェスチャーや座標イベントのために開いていた communication window を閉じてしまい、そのイベントを失うためです。したがって verify のタイミングでも座標の出力やクリックの発行が起こり得ます。
 
 ホスト側verifyが有効な場合、チップがホストの保持中に参照値を再seedしないよう、Idle-Touch timeoutは0に設定します。verify周期0の場合だけ、チップ側の60秒timeoutをstuck-touchのfallbackとして残します。
 
-### 2.3 スクロールレイヤーの発火制御
+### 2.3 構成の設計手順
 
-`scroll-slider-layer` は、スクロールスライダーエリアをタッチした時に有効化するドライバー専用レイヤーを指定します。`scroll-slider-trigger-layers` は、その自動有効化をどのレイヤーから許可するかを制限します。`scroll-layers` は、ドライバーが有効・無効を変更せず監視する手動スクロールレイヤーです。
-
-ドライバは、スクロールスライダーエリア付近でタッチが始まった時点の highest active layer を確認します。その layer が `scroll-slider-trigger-layers` に含まれていれば `scroll-slider-layer` を有効化します。含まれていなければ、スライダーレイヤーには入らず通常のタップ/ジェスチャーとして処理します。
-
-例:
-
-```dts
-scroll-slider-layer = <6>;
-scroll-start = <50>;
-scroll-slider-trigger-layers = <0>;
-scroll-layers = <2 3>;
-```
-
-この例では layer 6 をスクロール用レイヤーとして使いますが、発火できるのは layer 0 が highest active layer の時だけです。padstick や mouse-only 用のレイヤーでは、右端も含めたパッド全体を使いたい場合に有効です。
-
-`scroll-slider-trigger-layers` を省略した場合は従来どおり、どの layer からでも `scroll-slider-layer` を発火できます。
-
-### 2.4 構成の設計手順
-
-設定は、個別の値を先に決めるのではなく、次の順に決めます。これにより、ドライバーが所有するレイヤー、キーマップが所有するレイヤー、Input Processorが座標を変換する責務を混ぜません。
+設定は、個別の値を先に決めるのではなく、次の順に決めます。
 
 | 手順 | 決めること | プロパティ | 選択基準・制約 |
 |---|---|---|---|
 | 1 | 接続先を特定する | `reg`, `irq-gpios` | 基板のI2CアドレスとRDY割り込みGPIO。両方必須で、通常は回路図の値をそのまま使います。 |
 | 2 | タップ操作を決める | `single-tap`, `double-tap`, `triple-tap` | 各値は `-1` で無効、`0`～`2` で `BTN_0`～`BTN_2`。不要なジェスチャーは明示的に無効のままにします。 |
-| 3 | 座標の向きを決める | `rotate-cw` | 実装方向に合わせて `<0>`、`<1>`、`<2>`、`<3>` を選びます。ドライバーが座標と右端スライダー領域を一緒に回転するため、同じ回転をInput Processor側で重ねません。 |
+| 3 | 座標の向きを決める | `rotate-cw` | 実装方向に合わせて `<0>`、`<1>`、`<2>`、`<3>` を選びます。Input Processorのedge指定は回転後の座標に対して行います。 |
 | 4 | 座標方式を決める | `report-abs` | 直接相対ポインタなら省略します。absolute-to-relative、padstick、matrixなど絶対座標を受けるInput Processorを使うなら `report-abs;` を設定します。その場合、下流で `INPUT_BTN_TOUCH` を消費または抑制します。 |
 | 5 | ノイズ境界を決める | `jitter-deadband` | まずTrackpad01の既定値 `<8>` で測定します。静止時の揺れが残るなら増やし、微小移動が失われるなら減らします。`0` はdeadbandだけを無効にし、中央値フィルターは残ります。 |
-| 6 | 右端スライダーを使うか決める | `scroll-slider-layer`, `scroll-start`, `scroll-slider-trigger-layers` | 使う場合は、他のkey binding、macro、behaviorから絶対に有効化しない専用層を `scroll-slider-layer` に指定します。`scroll-start` は右端の幅で、まず `<40>` を基準に調整します。発火元を制限する時だけ `scroll-slider-trigger-layers` に接触開始時のhighest active layerを列挙します。 |
-| 7 | 手動スクロールを使うか決める | `scroll-layers` | キー操作で有効にするスクロール層だけを列挙します。ドライバーは監視だけで、有効化・解除しません。`scroll-slider-layer` を重複指定しません。接触中に対象層が有効なら、その接触のタップと解除後に遅れて届くtap 1件を共通処理で抑止します。 |
-| 8 | 接触の生存確認を決める | `touch-verify-interval-ms` | 通常は既定値 `<120>` を維持します。これは読み取り失敗または指なしを検出した時に古い接触をreleaseします。チップの60秒fallbackだけを使うと決めた場合だけ `<0>` にします。 |
+| 6 | edge routingを決める | 下流のInput Processor | side sliderには`zmk-input-temp-layer-touch`を使い、absolute-to-relative変換より前の全routeへ配置します。 |
+| 7 | 接触の生存確認を決める | `touch-verify-interval-ms` | 通常は既定値 `<120>` を維持します。これは読み取り失敗または指なしを検出した時に古い接触をreleaseします。チップの60秒fallbackだけを使うと決めた場合だけ `<0>` にします。 |
 
-設計後は、通常ポインタ、右端スライダー、各手動スクロール層、各タップ、レイヤー解除直後の遅延tap、静止接触、suspend/resumeを実機で確認します。ビルド前にはDTSのプロパティ名とレイヤー番号、Input Processorの対象レイヤーが一致していることを確認してください。
+設計後は、通常ポインタ、設定した全edge、各tap、layer解除直後の遅延tap、静止接触、suspend/resumeを実機で確認します。
 
-### 2.5 フィルターテスト
+### 2.4 フィルターテスト
 
 デッドバンド、瞬間的な外れ値、接触開始時の初期化、一時的な無効座標、zero-delta時の相対速度、絶対・相対モードの座標同等性、runtime reset flagの検出、モード別の`INPUT_BTN_TOUCH` policyは次のhost testで確認できます。相対deltaは、絶対モードと同じfiltered座標から導出されることを確認します。
 
@@ -175,11 +149,6 @@ manifest:
         double-tap = <0>;
         triple-tap = <0>;
 
-        /* スクロールスライダー設定 */
-        scroll-slider-layer = <1>;
-        scroll-start = <27>;
-        // scroll-slider-trigger-layers = <0>; // 任意: 指定した highest active layer の時だけ slider mode に入る
-        // scroll-layers = <2 3>; // 任意: キーマップ所有の手動スクロール層。layer 1 は含めない
         rotate-cw = <0>;
         // report-abs; // 絶対座標を使用する場合 (0-1024、最大値を含む)
         // touch-verify-interval-ms = <120>; // 任意: レイヤー非依存でタッチ継続を確認する
@@ -198,15 +167,6 @@ manifest:
             input-processors = <&zip_xy_scaler 1 20>,
                                <&zip_xy_to_scroll_mapper>;
         };
-        /* 上の scroll-layers を設定した場合は、同じレイヤー番号と意図した
-         * 手動スクロール用processor chainを使うlistener entryも追加します。例:
-         *
-         * manual_scroller {
-         *     layers = <2 3>;
-         *     input-processors = <&zip_xy_scaler 1 20>,
-         *                        <&zip_xy_to_scroll_mapper>;
-         * };
-         */
     };
 };
 ```
