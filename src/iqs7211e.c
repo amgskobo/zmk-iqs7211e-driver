@@ -12,9 +12,6 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/kernel.h>
-#include <zmk/keymap.h>
-#include <zmk/event_manager.h>
-#include <zmk/events/layer_state_changed.h>
 #include <zephyr/pm/device.h>
 #include "iqs7211e_init.h"
 #include "iqs7211e.h"
@@ -57,7 +54,6 @@ static size_t iqs7211e_work_queue_min_unused =
 #endif
 
 static enum iqs7211e_gestures_event iqs7211e_get_touchpad_event(const struct iqs7211e_data *data);
-static bool iqs7211e_is_tap_gesture(enum iqs7211e_gestures_event gesture_event);
 static bool iqs7211e_init_state(struct iqs7211e_data *data);
 static int iqs7211e_get_product_num(struct iqs7211e_data *data);
 static int iqs7211e_read_info_flags(const struct iqs7211e_data *data, uint8_t *info_flags);
@@ -89,8 +85,6 @@ static int iqs7211e_set_suspend_state(struct iqs7211e_data *data, bool suspend);
 static int iqs7211e_run_ati(struct iqs7211e_data *data);
 static int iqs7211e_queue_value_updates(struct iqs7211e_data *data);
 static int iqs7211e_set_event_mode(struct iqs7211e_data *data);
-static bool iqs7211e_layer_allowed(const uint8_t *layers, uint8_t layer_count);
-static bool iqs7211e_scroll_slider_trigger_layer_allowed(const struct iqs7211e_config *config);
 static bool iqs7211e_touch_verify_chain_alive(const struct iqs7211e_data *data);
 static int iqs7211e_release_touch(struct iqs7211e_data *data);
 static int iqs7211e_begin_runtime_reinitialization(struct iqs7211e_data *data);
@@ -649,71 +643,9 @@ static enum iqs7211e_gestures_event iqs7211e_get_touchpad_event(const struct iqs
     }
 }
 
-static bool iqs7211e_is_tap_gesture(enum iqs7211e_gestures_event gesture_event)
-{
-    return gesture_event == IQS7211E_GESTURE_SINGLE_TAP ||
-           gesture_event == IQS7211E_GESTURE_DOUBLE_TAP ||
-           gesture_event == IQS7211E_GESTURE_TRIPLE_TAP;
-}
-
 static uint8_t iqs7211e_get_bit(uint8_t byte, uint8_t pos)
 {
     return (byte >> pos) & 0x01;
-}
-
-static bool iqs7211e_layer_allowed(const uint8_t *layers, uint8_t layer_count)
-{
-    if (layer_count == 0)
-    {
-        return true;
-    }
-
-    /* ZMK returns a layer *index* here.  DeviceTree properties name stable
-     * layer IDs, which differ after ZMK Studio reorders the keymap. */
-    zmk_keymap_layer_index_t active_index = zmk_keymap_highest_layer_active();
-    zmk_keymap_layer_id_t active_layer = zmk_keymap_layer_index_to_id(active_index);
-
-    for (uint8_t i = 0; i < layer_count; i++)
-    {
-        if (layers[i] == active_layer)
-        {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-/*
- * A gesture belongs to the mode the board is in, so it takes the highest active
- * layer: the top of the stack is what the user is driving.
- */
-static bool iqs7211e_scroll_slider_trigger_layer_allowed(const struct iqs7211e_config *config)
-{
-    return iqs7211e_layer_allowed(config->scroll_slider_trigger_layers,
-                                  config->scroll_slider_trigger_layer_count);
-}
-
-/*
- * Common tap gate for the automatic slider layer and additional layers.
- * Layer ownership is intentionally irrelevant to gesture suppression.
- */
-static bool iqs7211e_scroll_layer_active(const struct iqs7211e_config *config)
-{
-    /* The automatic slider and manually selected layers use the same gate. */
-    if (config->scroll_slider_layer >= 0 &&
-        zmk_keymap_layer_active(config->scroll_slider_layer))
-    {
-        return true;
-    }
-    for (uint8_t i = 0; i < config->scroll_layer_count; i++)
-    {
-        if (zmk_keymap_layer_active(config->scroll_layers[i]))
-        {
-            return true;
-        }
-    }
-    return false;
 }
 
 static bool iqs7211e_touch_verify_chain_alive(const struct iqs7211e_data *data)
@@ -741,7 +673,6 @@ static int iqs7211e_release_touch(struct iqs7211e_data *data)
     const struct iqs7211e_config *config = data->dev->config;
     int ret;
     int first_error = 0;
-    bool suppressed_contact = (atomic_set(&data->contact_tap_state, 0) & 2) != 0;
 
     k_work_cancel_delayable(&data->touch_verify_work);
 
@@ -788,15 +719,6 @@ static int iqs7211e_release_touch(struct iqs7211e_data *data)
         }
     }
 
-    if (data->scroll_slider_layer_activated_by_driver && config->scroll_slider_layer >= 0)
-    {
-        zmk_keymap_layer_deactivate(config->scroll_slider_layer, false);
-        LOG_DBG("Scroll slider layer deactivated");
-    }
-    data->suppress_delayed_scroll_tap |= suppressed_contact;
-    data->is_scroll_slider_layer_active = false;
-    data->scroll_slider_layer_activated_by_driver = false;
-
     data->touch_count = 0;
     data->finger_1_prev_dx = 0;
     data->finger_1_prev_dy = 0;
@@ -804,8 +726,8 @@ static int iqs7211e_release_touch(struct iqs7211e_data *data)
     return first_error;
 }
 
-/* A failed report after a contact has started must not strand its transient
- * layer state while waiting for an interrupt that may never arrive. */
+/* A failed report after a contact has started must not strand its touch state
+ * while waiting for an interrupt that may never arrive. */
 static int iqs7211e_abort_touch_after_report_failure(struct iqs7211e_data *data,
                                                       int report_error)
 {
@@ -848,8 +770,6 @@ static int iqs7211e_begin_runtime_reinitialization(struct iqs7211e_data *data)
     {
         first_error = ret;
     }
-
-    data->suppress_delayed_scroll_tap = false;
 
     data->init_state = IQS7211E_INIT_UPDATE_SETTINGS;
     data->reset_called = false;
@@ -1647,23 +1567,9 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
     {
         /* --- Path: Touch Active --- */
 
-        /* A new contact starts a new gesture epoch. Do not let an absent
-         * delayed gesture from the preceding scroll contact swallow a later,
-         * unrelated normal tap. */
-        if (data->suppress_delayed_scroll_tap)
-        {
-            LOG_DBG("Discarding pending delayed-scroll tap suppression on new contact");
-            data->suppress_delayed_scroll_tap = false;
-        }
-
         /* 3.1. Touch State Toggle */
         if (!data->last_touched_state)
         {
-            atomic_set(&data->contact_tap_state, 1);
-            if (iqs7211e_scroll_layer_active(config))
-            {
-                atomic_or(&data->contact_tap_state, 2);
-            }
             if (iqs7211e_runtime_reports_touch_state(config->report_abs))
             {
                 ret = input_report_key(data->dev, INPUT_BTN_TOUCH, true, false,
@@ -1676,61 +1582,33 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
             }
             data->last_touched_state = true;
         }
-        /* 3.2. Right-edge scroll-slider layer detection */
-        if (data->touch_count <= 2 && config->scroll_slider_layer >= 0 &&
-            !data->is_scroll_slider_layer_active &&
-            iqs7211e_scroll_slider_trigger_layer_allowed(config))
+        /* 3.2. Gesture / Button Processing. Routing and suppression belong to
+         * input processors, so the sensor reports every configured gesture. */
+        switch (gesture_event)
         {
-            /* Compare against MaxX - padding */
-            if (x > RESOLUTION_X - config->scroll_start)
+        case IQS7211E_GESTURE_SINGLE_TAP:
+            if (config->single_tap >= 0)
             {
-                if (iqs7211e_runtime_should_activate_scroll_slider_layer(
-                        zmk_keymap_layer_active(config->scroll_slider_layer)))
-                {
-                    zmk_keymap_layer_activate(config->scroll_slider_layer, false);
-                    data->scroll_slider_layer_activated_by_driver = true;
-                }
-                data->is_scroll_slider_layer_active = true;
-                LOG_DBG("Scroll slider layer activated");
+                iqs7211e_queue_clicks(data, INPUT_BTN_0 + config->single_tap, 1);
             }
-        }
-
-        /* Sample after automatic layer activation, also covering a layer that
-         * was already active before this contact began. */
-        if (iqs7211e_scroll_layer_active(config))
-        {
-            atomic_or(&data->contact_tap_state, 2);
-        }
-
-        /* 3.3. Gesture / Button Processing (Skip if scrolling) */
-        if (!(atomic_get(&data->contact_tap_state) & 2))
-        {
-            switch (gesture_event)
+            break;
+        case IQS7211E_GESTURE_DOUBLE_TAP:
+            if (config->double_tap >= 0)
             {
-            case IQS7211E_GESTURE_SINGLE_TAP:
-                if (config->single_tap >= 0)
-                {
-                    iqs7211e_queue_clicks(data, INPUT_BTN_0 + config->single_tap, 1);
-                }
-                break;
-            case IQS7211E_GESTURE_DOUBLE_TAP:
-                if (config->double_tap >= 0)
-                {
-                    iqs7211e_queue_clicks(data, INPUT_BTN_0 + config->double_tap, 2);
-                }
-                break;
-            case IQS7211E_GESTURE_TRIPLE_TAP:
-                if (config->triple_tap >= 0)
-                {
-                    iqs7211e_queue_clicks(data, INPUT_BTN_0 + config->triple_tap, 3);
-                }
-                break;
-            default:
-                break;
+                iqs7211e_queue_clicks(data, INPUT_BTN_0 + config->double_tap, 2);
             }
+            break;
+        case IQS7211E_GESTURE_TRIPLE_TAP:
+            if (config->triple_tap >= 0)
+            {
+                iqs7211e_queue_clicks(data, INPUT_BTN_0 + config->triple_tap, 3);
+            }
+            break;
+        default:
+            break;
         }
 
-        /* 3.4. Coordinate Reporting */
+        /* 3.3. Coordinate Reporting */
         if (config->report_abs)
         {
             ret = iqs7211e_report_abs_coordinates(data, x, y);
@@ -1758,7 +1636,7 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
             }
         }
 
-        /* 3.5. Update History */
+        /* 3.4. Update History */
         if (data->touch_count < 255)
         {
             data->touch_count++;
@@ -1768,19 +1646,7 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
     {
         /* --- Path: Touch Released --- */
 
-        const atomic_val_t contact_tap_state = atomic_set(&data->contact_tap_state, 0);
-        const bool release_was_scroll = (contact_tap_state & 2) ||
-            iqs7211e_scroll_layer_active(config);
-        const bool release_has_tap = iqs7211e_is_tap_gesture(gesture_event);
         int release_error = 0;
-
-        if (iqs7211e_runtime_should_suppress_delayed_scroll_tap(
-                data->suppress_delayed_scroll_tap, false, release_has_tap))
-        {
-            LOG_DBG("Suppressing delayed tap from preceding scroll contact");
-            data->suppress_delayed_scroll_tap = false;
-            gesture_event = IQS7211E_GESTURE_NONE;
-        }
 
         /* 4.1. Touch State Toggle */
         bool released_here = data->last_touched_state;
@@ -1799,32 +1665,29 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
             }
         }
 
-        /* 4.2. Process Release Gestures (Taps, etc.) - Only if not scrolling */
-        if (!release_was_scroll)
+        /* 4.2. Process Release Gestures (Taps, etc.). */
+        switch (gesture_event)
         {
-            switch (gesture_event)
+        case IQS7211E_GESTURE_SINGLE_TAP:
+            if (config->single_tap >= 0)
             {
-            case IQS7211E_GESTURE_SINGLE_TAP:
-                if (config->single_tap >= 0)
-                {
-                    iqs7211e_queue_clicks(data, INPUT_BTN_0 + config->single_tap, 1);
-                }
-                break;
-            case IQS7211E_GESTURE_DOUBLE_TAP:
-                if (config->double_tap >= 0)
-                {
-                    iqs7211e_queue_clicks(data, INPUT_BTN_0 + config->double_tap, 2);
-                }
-                break;
-            case IQS7211E_GESTURE_TRIPLE_TAP:
-                if (config->triple_tap >= 0)
-                {
-                    iqs7211e_queue_clicks(data, INPUT_BTN_0 + config->triple_tap, 3);
-                }
-                break;
-            default:
-                break;
+                iqs7211e_queue_clicks(data, INPUT_BTN_0 + config->single_tap, 1);
             }
+            break;
+        case IQS7211E_GESTURE_DOUBLE_TAP:
+            if (config->double_tap >= 0)
+            {
+                iqs7211e_queue_clicks(data, INPUT_BTN_0 + config->double_tap, 2);
+            }
+            break;
+        case IQS7211E_GESTURE_TRIPLE_TAP:
+            if (config->triple_tap >= 0)
+            {
+                iqs7211e_queue_clicks(data, INPUT_BTN_0 + config->triple_tap, 3);
+            }
+            break;
+        default:
+            break;
         }
 
         /*
@@ -1862,31 +1725,13 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
             k_work_cancel_delayable(&data->touch_verify_work);
         }
 
-        /* When a scroll contact ended before the sensor reported its tap
-         * gesture, remember that provenance for exactly one later no-finger
-         * tap. The L6 input processor is no longer selected at that point. */
-        if (iqs7211e_runtime_latch_delayed_scroll_tap(release_was_scroll,
-                                                       release_has_tap))
-        {
-            data->suppress_delayed_scroll_tap = true;
-        }
-
-        /* 4.4. Scroll-slider layer cleanup (at the very end of switching) */
-        if (data->scroll_slider_layer_activated_by_driver)
-        {
-            zmk_keymap_layer_deactivate(config->scroll_slider_layer, false);
-            LOG_DBG("Scroll slider layer deactivated");
-        }
-        data->is_scroll_slider_layer_active = false;
-        data->scroll_slider_layer_activated_by_driver = false;
-
-        /* 4.5. Update History */
+        /* 4.4. Update History */
         data->touch_count = 0;
         data->finger_1_prev_dx = 0;
         data->finger_1_prev_dy = 0;
 
-        /* A failed host report must not leave a driver-owned slider layer or
-         * a periodic work item alive after the physical contact is gone. */
+        /* A failed host report must not leave a periodic work item alive after
+         * the physical contact is gone. */
         if (release_error < 0)
         {
             data->touch_release_pending = true;
@@ -1996,9 +1841,6 @@ static int iqs7211e_init(const struct device *dev)
     }
     data->init_state = IQS7211E_INIT_VERIFY_PRODUCT;
     data->touch_count = 0;
-    data->is_scroll_slider_layer_active = false;
-    data->scroll_slider_layer_activated_by_driver = false;
-    data->suppress_delayed_scroll_tap = false;
     data->last_touched_state = false;
     data->touch_verify_pending = false;
     atomic_clear(&data->diagnostic_irq_count);
@@ -2204,9 +2046,6 @@ static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action ac
         data->init_state = IQS7211E_INIT_VERIFY_PRODUCT;
         data->reset_called = false;
         data->touch_count = 0;
-        data->is_scroll_slider_layer_active = false;
-        data->scroll_slider_layer_activated_by_driver = false;
-        data->suppress_delayed_scroll_tap = false;
         data->last_touched_state = false;
         data->touch_verify_pending = false;
         data->click_edges = 0;
@@ -2220,31 +2059,13 @@ static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action ac
 }
 #endif // #ifdef CONFIG_PM_DEVICE
 
-#define IQS7211E_SCROLL_SLIDER_TRIGGER_LAYERS(inst)                                            \
-    COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, scroll_slider_trigger_layers),                      \
-                (static const uint8_t iqs7211e_scroll_slider_trigger_layers_##inst[] =           \
-                     DT_INST_PROP(inst, scroll_slider_trigger_layers);),                         \
-                ())
-
-/* DTS array cells are wider than the uint8_t storage used by the runtime. */
-#define IQS7211E_VALIDATE_SCROLL_SLIDER_TRIGGER_LAYER_VALUE(idx, inst)                           \
-    BUILD_ASSERT(DT_INST_PROP_BY_IDX(inst, scroll_slider_trigger_layers, idx) <= UINT8_MAX,       \
-                 "scroll-slider-trigger-layers values must fit in uint8_t");                     \
-    BUILD_ASSERT(DT_INST_PROP_BY_IDX(inst, scroll_slider_trigger_layers, idx) <                  \
-                     ZMK_KEYMAP_LAYERS_LEN,                                                       \
-                 "scroll-slider-trigger-layers must name an existing keymap layer");
-
-#define IQS7211E_VALIDATE_SCROLL_SLIDER_TRIGGER_LAYER_VALUES(inst)                               \
-    LISTIFY(DT_INST_PROP_LEN_OR(inst, scroll_slider_trigger_layers, 0),                           \
-            IQS7211E_VALIDATE_SCROLL_SLIDER_TRIGGER_LAYER_VALUE, (;), inst)
-
 /*
  * The coordinate range is written twice: once as the value programmed into the
  * sensor (iqs7211e_init.h, as a register byte pair) and once as the number this
  * file rotates and thresholds against. The README invites editing the init
  * header, so tie them together - changing the resolution there and not here
- * would silently mirror every rotation, skew the release coordinate and move
- * the scroll edge, with nothing to say so.
+ * would silently mirror every rotation and skew the release coordinate, with
+ * nothing to say so.
  */
 BUILD_ASSERT(RESOLUTION_X == ((X_RESOLUTION_1 << 8) | X_RESOLUTION_0),
              "RESOLUTION_X must match X_RESOLUTION_0/1 in iqs7211e_init.h");
@@ -2261,18 +2082,6 @@ BUILD_ASSERT(RESOLUTION_Y == ((Y_RESOLUTION_1 << 8) | Y_RESOLUTION_0),
     BUILD_ASSERT(DT_INST_PROP_OR(inst, triple_tap, -1) >= -1 &&                                 \
                      DT_INST_PROP_OR(inst, triple_tap, -1) <= INT8_MAX,                          \
                  "triple-tap must fit in int8_t and be at least -1");                           \
-    BUILD_ASSERT(DT_INST_PROP_OR(inst, scroll_slider_layer, -1) >= -1 &&                        \
-                     DT_INST_PROP_OR(inst, scroll_slider_layer, -1) <= INT8_MAX,                 \
-                 "scroll-slider-layer must fit in int8_t and be at least -1");                  \
-    BUILD_ASSERT(DT_INST_PROP_OR(inst, scroll_slider_layer, -1) == -1 ||                         \
-                     DT_INST_PROP_OR(inst, scroll_slider_layer, -1) < ZMK_KEYMAP_LAYERS_LEN,      \
-                 "scroll-slider-layer must name an existing keymap layer");                      \
-    BUILD_ASSERT(DT_INST_PROP_OR(inst, scroll_start, 40) >= 0 &&                                \
-                      DT_INST_PROP_OR(inst, scroll_start, 40) <= RESOLUTION_X,                    \
-                  "scroll-start must be within the coordinate range");                          \
-    BUILD_ASSERT(DT_INST_PROP_LEN_OR(inst, scroll_slider_trigger_layers, 0) <= UINT8_MAX,         \
-                  "scroll-slider-trigger-layers must contain at most 255 layers");              \
-    IQS7211E_VALIDATE_SCROLL_SLIDER_TRIGGER_LAYER_VALUES(inst);                                   \
     BUILD_ASSERT(DT_INST_PROP_OR(inst, jitter_deadband, 8) >= 0 &&                              \
                      DT_INST_PROP_OR(inst, jitter_deadband, 8) <= RESOLUTION_X,                 \
                  "jitter-deadband must be within the coordinate range");                      \
@@ -2281,24 +2090,8 @@ BUILD_ASSERT(RESOLUTION_Y == ((Y_RESOLUTION_1 << 8) | Y_RESOLUTION_0),
                          UINT16_MAX,                                                             \
                  "touch-verify-interval-ms must fit in uint16_t")
 
-#define IQS7211E_VALIDATE_SCROLL_LAYER(idx, inst)                                               \
-    BUILD_ASSERT(DT_INST_PROP_BY_IDX(inst, scroll_layers, idx) <= UINT8_MAX &&                   \
-        DT_INST_PROP_BY_IDX(inst, scroll_layers, idx) < ZMK_KEYMAP_LAYERS_LEN,                   \
-        "scroll-layers must name existing keymap layer IDs");
-
-#define IQS7211E_SCROLL_LAYERS(inst)                                                            \
-    BUILD_ASSERT(DT_INST_PROP_LEN_OR(inst, scroll_layers, 0) <= UINT8_MAX,                      \
-        "scroll-layers must contain at most 255 layers");                                      \
-    LISTIFY(DT_INST_PROP_LEN_OR(inst, scroll_layers, 0),                                        \
-        IQS7211E_VALIDATE_SCROLL_LAYER, (;), inst)                                             \
-    COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, scroll_layers),                                     \
-        (static const uint8_t iqs7211e_scroll_layers_##inst[] =                                 \
-            DT_INST_PROP(inst, scroll_layers);), ())
-
 #define IQS7211E_DEFINE(inst)                                                                   \
-    IQS7211E_SCROLL_LAYERS(inst);                                                               \
     IQS7211E_VALIDATE(inst);                                                                    \
-    IQS7211E_SCROLL_SLIDER_TRIGGER_LAYERS(inst)                                                 \
     static struct iqs7211e_data iqs7211e_data_##inst;                                           \
     static const struct iqs7211e_config iqs7211e_config_##inst = {                              \
         .i2c = I2C_DT_SPEC_INST_GET(inst),                                                      \
@@ -2306,20 +2099,10 @@ BUILD_ASSERT(RESOLUTION_Y == ((Y_RESOLUTION_1 << 8) | Y_RESOLUTION_0),
         .single_tap = DT_INST_PROP_OR(inst, single_tap, -1),                                    \
         .double_tap = DT_INST_PROP_OR(inst, double_tap, -1),                                    \
         .triple_tap = DT_INST_PROP_OR(inst, triple_tap, -1),                                    \
-        .scroll_slider_layer = DT_INST_PROP_OR(inst, scroll_slider_layer, -1),                   \
-        .scroll_start = DT_INST_PROP_OR(inst, scroll_start, 40),                                \
-        .scroll_slider_trigger_layers = COND_CODE_1(                                            \
-            DT_INST_NODE_HAS_PROP(inst, scroll_slider_trigger_layers),                          \
-            (iqs7211e_scroll_slider_trigger_layers_##inst), (NULL)),                            \
-        .scroll_slider_trigger_layer_count =                                                    \
-            DT_INST_PROP_LEN_OR(inst, scroll_slider_trigger_layers, 0),                         \
         .jitter_deadband = DT_INST_PROP_OR(inst, jitter_deadband, 8),                            \
         .rotate_cw = DT_INST_PROP_OR(inst, rotate_cw, 0),                                       \
         /* report-abs is optional: absence selects direct relative reports. */                   \
         .report_abs = DT_INST_PROP_OR(inst, report_abs, false),                                 \
-        .scroll_layers = COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, scroll_layers),                 \
-            (iqs7211e_scroll_layers_##inst), (NULL)),                                           \
-        .scroll_layer_count = DT_INST_PROP_LEN_OR(inst, scroll_layers, 0),                       \
         .touch_verify_interval_ms =                                                              \
             DT_INST_PROP_OR(inst, touch_verify_interval_ms, 120),                                \
     };                                                                                          \
@@ -2334,28 +2117,3 @@ BUILD_ASSERT(RESOLUTION_Y == ((Y_RESOLUTION_1 << 8) | Y_RESOLUTION_0),
                           NULL);
 
 DT_INST_FOREACH_STATUS_OKAY(IQS7211E_DEFINE)
-
-/* Record even a brief manual scroll activation between sensor reports. */
-#define IQS7211E_NOTE_TAP_LAYER(inst)                                                        \
-    {                                                                                     \
-        struct iqs7211e_data *data = DEVICE_DT_INST_GET(inst)->data;                         \
-        const struct iqs7211e_config *config = DEVICE_DT_INST_GET(inst)->config;             \
-        if (iqs7211e_scroll_layer_active(config))                                            \
-        {                                                                                 \
-            atomic_val_t state = atomic_get(&data->contact_tap_state);                      \
-            while ((state & 1) && !atomic_cas(&data->contact_tap_state, state, state | 2))   \
-            {                                                                             \
-                state = atomic_get(&data->contact_tap_state);                               \
-            }                                                                             \
-        }                                                                                 \
-    }
-
-static int iqs7211e_tap_layer_listener(const zmk_event_t *event)
-{
-    ARG_UNUSED(event);
-    DT_INST_FOREACH_STATUS_OKAY(IQS7211E_NOTE_TAP_LAYER)
-    return ZMK_EV_EVENT_BUBBLE;
-}
-
-ZMK_LISTENER(iqs7211e_tap_layer, iqs7211e_tap_layer_listener);
-ZMK_SUBSCRIPTION(iqs7211e_tap_layer, zmk_layer_state_changed);

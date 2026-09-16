@@ -119,16 +119,8 @@ struct iqs7211e_config
     int8_t single_tap;
     int8_t double_tap;
     int8_t triple_tap;
-    /* Driver-owned layer for the right-edge scroll slider. */
-    int8_t scroll_slider_layer;
-    uint16_t scroll_start;
-    const uint8_t *scroll_slider_trigger_layers;
-    uint8_t scroll_slider_trigger_layer_count;
     uint8_t rotate_cw;
     bool report_abs;
-    /* Keymap-owned manual-scroll layers; the slider layer is separate above. */
-    const uint8_t *scroll_layers;
-    uint8_t scroll_layer_count;
     uint16_t jitter_deadband;
     uint16_t touch_verify_interval_ms;
 };
@@ -143,14 +135,6 @@ struct iqs7211e_data
     atomic_t suspended;
     bool sensor_suspended;
     uint8_t sensor_resume_attempts;
-    bool is_scroll_slider_layer_active;
-    /* True only when this contact caused the driver to activate scroll_slider_layer. */
-    bool scroll_slider_layer_activated_by_driver;
-    /* A scroll contact ended without its tap gesture in the same report. */
-    bool suppress_delayed_scroll_tap;
-    /* Bit 0: contact open; bit 1: contact visited a scroll layer.
-     * Layer callbacks and the private input queue share this atomic state. */
-    atomic_t contact_tap_state;
     uint8_t gestures[2];
     uint8_t info_flags[2];
     uint8_t touch_count;

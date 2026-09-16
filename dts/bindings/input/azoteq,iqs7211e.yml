@@ -5,14 +5,6 @@ compatible: "azoteq,iqs7211e"
 include: i2c-device.yaml
 
 properties:
-  scroll-layers:
-    type: array
-    description: |
-      Existing manual-scroll keymap layer IDs. The driver only watches these;
-      it never activates or deactivates them. A contact that visits any listed
-      layer is considered scrolling, so its tap and one delayed no-finger tap
-      after deactivation are suppressed. The scroll-slider-layer is monitored
-      in the same way automatically. Omit when no manual scroll layers exist.
   reg:
     required: true
     description: I2C address of the device
@@ -38,28 +30,6 @@ properties:
     description: |
       Set the button triggered by triple-tap.
       -1 = disabled, 0 = BTN_0, 1 = BTN_1, 2 = BTN_2
-  scroll-slider-layer:
-    type: int
-    default: -1
-    description: |
-      Driver-owned layer activated while the right-edge scroll slider is touched.
-      -1 = disabled, otherwise an existing keymap layer ID. This must be a
-      driver-exclusive layer: do not also activate it from a key binding,
-      macro, or other behavior.
-  scroll-start:
-    type: int
-    default: 40
-    description: |
-      Padding from the right edge used to detect the scroll slider area.
-      The normalized coordinate range is 0-1024 inclusive.
-  scroll-slider-trigger-layers:
-    type: array
-    description: |
-      Restrict automatic scroll-slider-layer activation to these highest active layers.
-      If omitted, automatic slider activation is allowed on any layer.
-      This does not change the target scroll-slider-layer; it only controls which
-      layers may trigger it. Values are existing keymap layer IDs, not layer
-      order indexes.
   rotate-cw:
     type: int
     default: 0
@@ -70,8 +40,7 @@ properties:
       - 3
     description: |
       Clockwise rotation applied to every reported coordinate, to match how the
-      module is physically mounted. The scroll slider edge follows it, so there
-      is no separate setting for that.
+      module is physically mounted.
       0 = 0 deg, 1 = 90 deg, 2 = 180 deg, 3 = 270 deg
   report-abs:
     type: boolean
