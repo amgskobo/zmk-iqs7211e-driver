@@ -20,6 +20,6 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Filter tests
-        run: tests/filter/run.sh
+        run: bash tests/filter/run.sh
       - name: Runtime fault-injection tests
         run: python3 tests/runtime/run.py
