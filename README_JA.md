@@ -187,6 +187,8 @@ RDY 割り込みを再有効化した後は、少し遅らせて logical level �
 
 device PM がセンサーを wake する時点で I2C bus がまだ利用できない場合は、同じ delayed work が wake を再試行します。短間隔の再試行後は間隔を広げ、bus が復旧するまで待ちます。
 
+device PM が GPIO controller より先に driver を resume した場合は、同じ work が RDY interrupt の再設定も繰り返します。RDY level が inactive でも、interrupt の有効化が実際に成功するまでは復旧完了とみなしません。そのため deep sleep 復帰後の最初の touch を待てる状態を維持します。
+
 通常は次の production 既定値のままで使用します。
 
 ```kconfig

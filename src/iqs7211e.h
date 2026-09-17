@@ -133,6 +133,9 @@ struct iqs7211e_data
     enum iqs7211e_init_state init_state;
     bool reset_called;
     atomic_t suspended;
+    /* PM resume can run before the GPIO controller is ready. Track whether
+     * that controller actually accepted the RDY interrupt configuration. */
+    atomic_t irq_enabled;
     bool sensor_suspended;
     uint8_t sensor_resume_attempts;
     uint8_t gestures[2];

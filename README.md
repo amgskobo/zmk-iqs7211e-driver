@@ -217,6 +217,10 @@ report work is queued again without waiting for another edge. Fast recovery is
 bounded and then backed off, so a stuck RDY pin cannot spin the work queue.
 If the I2C bus is not ready when device PM first tries to wake the sensor, the
 same delayed work retries the wake and backs off until the bus recovers.
+If device PM resumes the driver before the GPIO controller is ready, the work
+also retries arming the RDY interrupt. An inactive RDY level is not considered
+recovered until the interrupt has actually been enabled, so the first touch
+after deep sleep cannot be left without an event source.
 
 The production defaults are normally sufficient:
 
