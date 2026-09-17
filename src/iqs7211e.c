@@ -1169,6 +1169,27 @@ static void iqs7211e_rdy_recheck_work_handler(struct k_work *work)
     }
 #endif
 
+    /* PM may resume this sensor before its GPIO controller. If the first IRQ
+     * setup failed, sampling an inactive RDY pin must not end recovery with the
+     * interrupt still disabled: the next touch would then be lost forever. */
+    if (!atomic_get(&data->irq_enabled))
+    {
+        if (set_gpio_interrupt(data->dev, true) < 0)
+        {
+            iqs7211e_retry_rdy_recheck(data);
+            iqs7211e_note_work_queue_stack_usage();
+            return;
+        }
+
+        /* An already-active level may invoke the callback immediately. It
+         * masks the IRQ again after queueing the regular report work. */
+        if (!atomic_get(&data->irq_enabled))
+        {
+            iqs7211e_note_work_queue_stack_usage();
+            return;
+        }
+    }
+
     int rdy_active = gpio_pin_get_dt(&config->irq_gpio);
     if (rdy_active < 0)
     {
@@ -1787,10 +1808,18 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
 static int set_gpio_interrupt(const struct device *dev, const bool en)
 {
     const struct iqs7211e_config *config = dev->config;
+    struct iqs7211e_data *data = dev->data;
+    atomic_val_t previous = atomic_get(&data->irq_enabled);
+
+    /* Publish the intended state before configuring the GPIO. An active level
+     * may invoke the callback immediately; that callback must be able to mask
+     * the IRQ and leave this flag clear without this function overwriting it. */
+    atomic_set(&data->irq_enabled, en ? 1 : 0);
     int ret = gpio_pin_interrupt_configure_dt(&config->irq_gpio,
-                                              en ? GPIO_INT_EDGE_TO_ACTIVE : GPIO_INT_DISABLE);
+                                               en ? GPIO_INT_EDGE_TO_ACTIVE : GPIO_INT_DISABLE);
     if (ret < 0)
     {
+        atomic_set(&data->irq_enabled, previous);
         LOG_ERR("Failed to set interrupt");
         return ret;
     }
@@ -1864,6 +1893,7 @@ static int iqs7211e_init(const struct device *dev)
     data->diagnostic_last_report_ret = 0;
     data->dev = dev;
     atomic_clear(&data->suspended);
+    atomic_clear(&data->irq_enabled);
     atomic_clear(&data->rdy_recheck_attempts);
     data->sensor_suspended = false;
     data->sensor_resume_attempts = 0;
