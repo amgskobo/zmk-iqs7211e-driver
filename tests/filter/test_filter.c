@@ -1,4 +1,7 @@
-/* SPDX-License-Identifier: MIT */
+/*
+ * Copyright (c) 2026 amgskobo
+ * SPDX-License-Identifier: MIT
+ */
 
 #include <stdint.h>
 #include <stdio.h>

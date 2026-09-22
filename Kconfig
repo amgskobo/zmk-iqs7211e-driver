@@ -30,6 +30,18 @@ config IQS7211E_WORKQUEUE_PRIORITY
     input reports let the input thread run and drain it without dropping an
     event.
 
+config IQS7211E_PM_EARLY_INIT_PRIORITY
+  int "Init priority of the early suspend device"
+  default 45
+  depends on PM_DEVICE
+  help
+    POST_KERNEL priority of a small device that suspends every IQS7211E
+    while its I2C bus still works when ZMK powers off through &soft_off.
+    That path suspends devices in init order, and the sensor's own device
+    comes after the bus, where it cannot reach the sensor any more: without
+    this the sensor stays awake, at its active current, for as long as the
+    keyboard is off. Must be below I2C_INIT_PRIORITY.
+
 config IQS7211E_WORKQUEUE_STACK_USAGE
   bool "Log IQS7211E work queue stack high-water mark"
   select INIT_STACKS

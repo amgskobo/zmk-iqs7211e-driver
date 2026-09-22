@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2026 amgskobo
+ * SPDX-License-Identifier: MIT
+ */
+
 #include <assert.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -12,6 +17,7 @@ struct k_work { int unused; };
 struct k_work_delayable { struct k_work work; };
 struct device { const void *config; void *data; };
 struct iqs7211e_config {
+    int i2c;
     bool report_abs;
     int rotate_cw, jitter_deadband;
     int single_tap, double_tap, triple_tap;
@@ -19,8 +25,9 @@ struct iqs7211e_config {
 };
 struct iqs7211e_data {
     const struct device *dev;
-    struct k_work_delayable touch_verify_work, click_work;
-    atomic_t suspended, rdy_recheck_attempts;
+    struct k_work_delayable touch_verify_work, click_work, boot_kick_work, rdy_recheck_work;
+    atomic_t suspended, rdy_recheck_attempts, diagnostic_irq_count;
+    uint8_t boot_kick_attempts;
     bool last_touched_state, touch_release_pending;
     bool reset_called, touch_verify_pending;
     int finger_1_prev_x, finger_1_prev_y, finger_1_prev_dx, finger_1_prev_dy;
@@ -41,13 +48,22 @@ struct iqs7211e_data {
 #define INPUT_ABS_X 0
 #define INPUT_ABS_Y 1
 #define INPUT_BTN_TOUCH 330
+#define IQS7211E_INIT_VERIFY_PRODUCT 1
 #define IQS7211E_INIT_UPDATE_SETTINGS 4
+#define IQS7211E_MM_SYS_CONTROL 0x33
+#define IQS7211E_SW_RESET_BIT 1
+#define SYSTEM_CONTROL_0 0x00
+#define SYSTEM_CONTROL_1 0x00
+#define IQS7211E_BOOT_KICK_RETRY_MS 200
+#define IQS7211E_BOOT_KICK_ATTEMPTS 3
+#define IQS7211E_BOOT_KICK_SETTLE_MS 50
 #define IQS7211E_CLICK_EDGE_MS 20
 #define K_FOREVER 0
 #define K_MSEC(ms) (ms)
 #define LOG_ERR(...) ((void)0)
 #define LOG_WRN(...) ((void)0)
 #define LOG_DBG(...) ((void)0)
+#define LOG_INF(...) ((void)0)
 #define CONTAINER_OF(ptr, type, member) ((type *)((char *)(ptr) - offsetof(type, member)))
 static int atomic_get(atomic_t *v) { return *v; }
 static void atomic_clear(atomic_t *v) { *v = 0; }
@@ -56,10 +72,34 @@ static struct k_work_delayable *k_work_delayable_from_work(struct k_work *w) {
 }
 static void k_work_cancel_delayable(struct k_work_delayable *w) { (void)w; }
 static int scheduled, release_attempts, presses, fail_key, fail_abs;
+static struct k_work_delayable *last_scheduled;
+static int last_delay;
 static int iqs7211e_reschedule_work(struct k_work_delayable *w, int ms) {
-    (void)w; (void)ms; scheduled++; return 0;
+    last_scheduled = w; last_delay = ms; scheduled++; return 0;
+}
+/* The RDY interrupt: whether it is armed, and how often it was re-armed. */
+static bool irq_armed = true;
+static int rearms;
+static int set_gpio_interrupt(const struct device *dev, bool en) {
+    (void)dev; irq_armed = en; return 0;
+}
+static int iqs7211e_enable_interrupt_and_recheck(void *data) {
+    (void)data; irq_armed = true; rearms++; return 0;
 }
 static void iqs7211e_note_work_queue_stack_usage(void) {}
+/* The one write the boot kick makes, and a way to make it fail. */
+static int writes, fail_write, last_reg;
+static uint8_t last_write[2];
+static int iqs7211e_write_bytes(const int *i2c, uint8_t reg, const uint8_t *buf, size_t len) {
+    (void)i2c;
+    assert(len == 2);
+    writes++;
+    last_reg = reg;
+    last_write[0] = buf[0];
+    last_write[1] = buf[1];
+    if (fail_write) { fail_write--; return -5; }
+    return 0;
+}
 static int input_report_key(const struct device *dev, int code, bool value, bool sync, int wait) {
     (void)dev; (void)code; (void)sync; (void)wait;
     if (value) presses++; else release_attempts++;
@@ -83,6 +123,67 @@ static void iqs7211e_queue_clicks(struct iqs7211e_data *d, uint16_t button, uint
 }
 
 /* DRIVER_FUNCTIONS */
+
+/*
+ * A sensor that kept its power through the SoC's reset raises no RDY: the boot
+ * kick resets it once, retries a failed write a bounded number of times, and
+ * leaves alone a part that has spoken or a driver that has moved on.
+ */
+static void test_boot_kick(const struct device *dev) {
+    struct iqs7211e_data d = {.dev = dev, .init_state = IQS7211E_INIT_VERIFY_PRODUCT};
+
+    /*
+     * Silent since boot: one forced write, reset bit set, suspend bit clear,
+     * with RDY masked across it and left to the recheck work to re-arm once
+     * the reset has had time to start.
+     */
+    writes = 0; scheduled = 0; irq_armed = true; rearms = 0;
+    iqs7211e_boot_kick_work_handler(&d.boot_kick_work.work);
+    assert(writes == 1 && scheduled == 1);
+    assert(last_reg == IQS7211E_MM_SYS_CONTROL);
+    assert(last_write[0] == 0x00 && last_write[1] == (1 << IQS7211E_SW_RESET_BIT));
+    assert(!irq_armed && rearms == 0);
+    assert(last_scheduled == &d.rdy_recheck_work && last_delay == IQS7211E_BOOT_KICK_SETTLE_MS);
+
+    /* An RDY edge since init: the part is talking, nothing is written. */
+    d = (struct iqs7211e_data){.dev = dev, .init_state = IQS7211E_INIT_VERIFY_PRODUCT,
+                               .diagnostic_irq_count = 1};
+    writes = 0;
+    iqs7211e_boot_kick_work_handler(&d.boot_kick_work.work);
+    assert(writes == 0);
+
+    /* Setup has moved on, or the driver is suspended: nothing either. */
+    d = (struct iqs7211e_data){.dev = dev, .init_state = IQS7211E_INIT_UPDATE_SETTINGS};
+    iqs7211e_boot_kick_work_handler(&d.boot_kick_work.work);
+    d = (struct iqs7211e_data){.dev = dev, .init_state = IQS7211E_INIT_VERIFY_PRODUCT,
+                               .suspended = 1};
+    iqs7211e_boot_kick_work_handler(&d.boot_kick_work.work);
+    assert(writes == 0);
+
+    /*
+     * A failed write is retried, and given up on after the last attempt; RDY
+     * is re-armed after every failure, so a part that wakes by itself is
+     * still heard.
+     */
+    d = (struct iqs7211e_data){.dev = dev, .init_state = IQS7211E_INIT_VERIFY_PRODUCT};
+    writes = 0; scheduled = 0; rearms = 0; fail_write = IQS7211E_BOOT_KICK_ATTEMPTS;
+    for (int i = 0; i < IQS7211E_BOOT_KICK_ATTEMPTS; i++) {
+        iqs7211e_boot_kick_work_handler(&d.boot_kick_work.work);
+        assert(irq_armed);
+    }
+    assert(writes == IQS7211E_BOOT_KICK_ATTEMPTS);
+    assert(scheduled == IQS7211E_BOOT_KICK_ATTEMPTS - 1);
+    assert(last_scheduled == &d.boot_kick_work);
+    assert(rearms == IQS7211E_BOOT_KICK_ATTEMPTS);
+
+    /* A write that succeeds on a retry is not repeated. */
+    d = (struct iqs7211e_data){.dev = dev, .init_state = IQS7211E_INIT_VERIFY_PRODUCT};
+    writes = 0; scheduled = 0; fail_write = 1;
+    iqs7211e_boot_kick_work_handler(&d.boot_kick_work.work);
+    iqs7211e_boot_kick_work_handler(&d.boot_kick_work.work);
+    assert(writes == 2 && scheduled == 2 && fail_write == 0);
+    assert(last_scheduled == &d.rdy_recheck_work && !irq_armed);
+}
 
 int main(void) {
     const struct iqs7211e_config config = {
@@ -135,5 +236,7 @@ int main(void) {
     fingers = 1; gesture = 0;
     assert(iqs7211e_report_data(&d) == 0);
     assert(!d.touch_release_pending && d.last_touched_state);
+
+    test_boot_kick(&dev);
     puts("iqs7211e runtime fault-injection tests passed");
 }

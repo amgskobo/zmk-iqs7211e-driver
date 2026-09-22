@@ -178,6 +178,10 @@ struct iqs7211e_data
     struct k_work_delayable rdy_recheck_work;
     struct k_work_sync rdy_recheck_work_sync;
     atomic_t rdy_recheck_attempts;
+    /* Resets a sensor that stays silent after boot; see its handler. */
+    struct k_work_delayable boot_kick_work;
+    struct k_work_sync boot_kick_work_sync;
+    uint8_t boot_kick_attempts;
 #ifdef CONFIG_PM_DEVICE
     struct k_work pm_release_work;
     struct k_work_sync pm_release_work_sync;

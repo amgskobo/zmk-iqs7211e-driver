@@ -1,3 +1,6 @@
+# Copyright (c) 2025-2026 amgskobo
+# SPDX-License-Identifier: MIT
+
 if (CONFIG_IQS7211E)
     zephyr_library()
     zephyr_library_sources(src/iqs7211e.c)

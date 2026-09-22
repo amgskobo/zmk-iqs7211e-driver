@@ -37,6 +37,18 @@ LOG_MODULE_REGISTER(iqs7211e, CONFIG_ZMK_LOG_LEVEL);
 #define IQS7211E_RESUME_RETRY_BACKOFF_MS 1000
 
 /*
+ * How long a boot waits for RDY before resetting a silent sensor. A freshly
+ * powered part streams after its own reset and raises RDY every cycle, well
+ * inside this; one that kept its power through the SoC's reset raises nothing.
+ */
+#define IQS7211E_BOOT_KICK_MS 200
+#define IQS7211E_BOOT_KICK_RETRY_MS 200
+#define IQS7211E_BOOT_KICK_ATTEMPTS 3
+/* RDY stays masked this long after the reset write; the reset's own window
+ * comes well after it (about 170 ms on hardware). */
+#define IQS7211E_BOOT_KICK_SETTLE_MS 50
+
+/*
  * Zephyr's asynchronous input backend changes K_FOREVER to K_NO_WAIT when an
  * input report originates on the system work queue. A full input message
  * queue can therefore drop a release event. Keep every driver-owned producer
@@ -66,6 +78,7 @@ static void iqs7211e_work_handler(struct k_work *work);
 static void iqs7211e_touch_verify_work_handler(struct k_work *work);
 static void iqs7211e_click_work_handler(struct k_work *work);
 static void iqs7211e_rdy_recheck_work_handler(struct k_work *work);
+static void iqs7211e_boot_kick_work_handler(struct k_work *work);
 #ifdef CONFIG_PM_DEVICE
 static void iqs7211e_pm_release_work_handler(struct k_work *work);
 #endif
@@ -388,6 +401,77 @@ static int iqs7211e_sw_reset(struct iqs7211e_data *data)
     }
     LOG_DBG("IQS7211E software reset issued");
     return 0;
+}
+
+/*
+ * The sensor keeps its power, and with it whatever state it was left in,
+ * through every reset that restarts only the SoC: the reset button, a firmware
+ * update, the watchdog, a wake from System OFF. Such a boot finds it either in
+ * event mode, where it raises RDY only for a touch, or suspended by the
+ * soft-off before the wake, where it never raises RDY at all. Setup starts at
+ * the first RDY, so the first case runs all of it - ATI included - under the
+ * finger whose touch finally raised RDY, and the new reference then holds that
+ * finger as a contact that never lifts; the second leaves the pad dead until
+ * its power is removed.
+ *
+ * So a boot that has heard nothing by the time a freshly powered part would
+ * long since have raised RDY forces a communication window and resets the part.
+ * A forced write is taken whatever the part is doing - it clock stretches to
+ * its next window - and wakes a suspended part too, since the write clears the
+ * suspend bit in the same session. The reset's own RDY then starts setup at
+ * boot, while nobody is touching the pad.
+ */
+static void iqs7211e_boot_kick_work_handler(struct k_work *work)
+{
+    struct k_work_delayable *d_work = k_work_delayable_from_work(work);
+    struct iqs7211e_data *data =
+        CONTAINER_OF(d_work, struct iqs7211e_data, boot_kick_work);
+    const struct iqs7211e_config *config = data->dev->config;
+
+    /*
+     * The RDY callback counts every edge since init. Any edge means the part
+     * is talking, and setup already runs or is queued to on this same queue.
+     */
+    if (atomic_get(&data->suspended) ||
+        atomic_get(&data->diagnostic_irq_count) != 0 ||
+        data->init_state != IQS7211E_INIT_VERIFY_PRODUCT)
+    {
+        return;
+    }
+
+    /*
+     * The forced window raises RDY too, and setup would answer it with a read
+     * of a part that is by then resetting: a NACK and three error lines on
+     * every boot. Mask RDY across the write and let the recheck work re-arm it
+     * once the reset is under way; its level check still catches a window
+     * that opens before then.
+     */
+    (void)set_gpio_interrupt(data->dev, false);
+
+    const uint8_t command[2] = {SYSTEM_CONTROL_0,
+                                SYSTEM_CONTROL_1 | (1 << IQS7211E_SW_RESET_BIT)};
+    int ret = iqs7211e_write_bytes(&config->i2c, IQS7211E_MM_SYS_CONTROL,
+                                   command, sizeof(command));
+    if (ret < 0)
+    {
+        /* Never leave the driver deaf: a part that wakes by itself must be heard. */
+        if (iqs7211e_enable_interrupt_and_recheck(data) < 0)
+        {
+            LOG_ERR("Failed to restore IRQ after a failed forced reset");
+        }
+        if (++data->boot_kick_attempts < IQS7211E_BOOT_KICK_ATTEMPTS)
+        {
+            iqs7211e_reschedule_work(&data->boot_kick_work,
+                                     K_MSEC(IQS7211E_BOOT_KICK_RETRY_MS));
+            return;
+        }
+        LOG_ERR("IQS7211E silent since boot and a forced reset failed: %d", ret);
+        return;
+    }
+
+    iqs7211e_reschedule_work(&data->rdy_recheck_work,
+                             K_MSEC(IQS7211E_BOOT_KICK_SETTLE_MS));
+    LOG_INF("IQS7211E silent since boot - forced a reset to run setup");
 }
 
 #ifdef CONFIG_PM_DEVICE
@@ -1903,6 +1987,8 @@ static int iqs7211e_init(const struct device *dev)
     k_work_init_delayable(&data->touch_verify_work, iqs7211e_touch_verify_work_handler);
     k_work_init_delayable(&data->click_work, iqs7211e_click_work_handler);
     k_work_init_delayable(&data->rdy_recheck_work, iqs7211e_rdy_recheck_work_handler);
+    k_work_init_delayable(&data->boot_kick_work, iqs7211e_boot_kick_work_handler);
+    data->boot_kick_attempts = 0;
 #ifdef CONFIG_PM_DEVICE
     k_work_init(&data->pm_release_work, iqs7211e_pm_release_work_handler);
     data->pm_release_ret = 0;
@@ -1913,6 +1999,9 @@ static int iqs7211e_init(const struct device *dev)
     {
         return ret;
     }
+
+    /* Only now can an edge be counted, so only now can silence mean anything. */
+    (void)iqs7211e_reschedule_work(&data->boot_kick_work, K_MSEC(IQS7211E_BOOT_KICK_MS));
 
     LOG_INF("IQS7211E driver initialized successfully");
     return 0;
@@ -2006,6 +2095,8 @@ static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action ac
                                      &data->touch_verify_work_sync);
         k_work_cancel_delayable_sync(&data->rdy_recheck_work,
                                      &data->rdy_recheck_work_sync);
+        k_work_cancel_delayable_sync(&data->boot_kick_work,
+                                     &data->boot_kick_work_sync);
         /* The recheck handler owns this counter while the driver is awake. */
         data->sensor_resume_attempts = 0;
         k_work_cancel_sync(&data->work, &data->work_sync);
@@ -2030,18 +2121,26 @@ static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action ac
 
         data->touch_verify_pending = false;
 
-        if (data->init_state != IQS7211E_INIT_NONE)
+        if (data->init_state != IQS7211E_INIT_NONE && !data->sensor_suspended)
         {
             /*
-             * Putting the sensor itself to sleep is best-effort. The I2C
-             * controller has a lower init priority than this driver, so a
-             * caller that suspends devices in initialisation order - ZMK's
-             * soft-off does - has already disabled the bus by the time this
-             * runs, and the write fails with -EIO once the bus times out.
+             * Putting the sensor itself to sleep is best-effort, and whether
+             * it happens depends on who is powering off. The I2C controller
+             * has a lower init priority than this driver. ZMK's &soft_off
+             * suspends devices in initialisation order, so the bus is already
+             * down by the time this runs and the write would fail with -EIO
+             * once the bus timed out - which is why the early device at the
+             * end of this file runs this whole suspend first, before the
+             * bus, and this pass then finds the sensor asleep and skips the
+             * write. ZMK's idle sleep suspends in the reverse order, so the
+             * bus is still up here and this is where the sensor is put to
+             * sleep. Either way it stays suspended through System OFF,
+             * since nothing removes its power, and the boot reset (see
+             * iqs7211e_boot_kick_work_handler) is what wakes it again.
              *
-             * Failing the suspend over that is worse than not sleeping the
-             * sensor: the driver side is already quiesced, which is what PM
-             * asked for, and returning an error aborted soft-off entirely
+             * Failing the suspend over a dead bus is worse than not sleeping
+             * the sensor: the driver side is already quiesced, which is what
+             * PM asked for, and returning an error aborted soft-off entirely
              * while undoing the quiesce re-armed the interrupt on the way to
              * power-off.
              */
@@ -2169,3 +2268,72 @@ BUILD_ASSERT(RESOLUTION_Y == ((Y_RESOLUTION_1 << 8) | Y_RESOLUTION_0),
                           NULL);
 
 DT_INST_FOREACH_STATUS_OKAY(IQS7211E_DEFINE)
+
+#ifdef CONFIG_PM_DEVICE
+
+BUILD_ASSERT(CONFIG_IQS7211E_PM_EARLY_INIT_PRIORITY < CONFIG_I2C_INIT_PRIORITY,
+             "the early suspend device must come before the I2C bus in init order");
+
+/*
+ * &soft_off suspends devices in init order, so by the time a sensor's own
+ * suspend runs, the I2C bus it needs is already down and the sensor stays
+ * awake through System OFF - scanning, at its active current, for as long as
+ * the keyboard is off. This device comes before the bus in init order and runs
+ * that same suspend for every sensor while the bus still works; each sensor's
+ * own turn then finds it asleep. Idle sleep suspends in the reverse order,
+ * where the sensors' own suspend already works, and this device finds nothing
+ * left to do. The GPIO controllers come earlier still, but the nRF GPIO driver
+ * has no power management, so masking RDY works here too.
+ *
+ * Resume stays with each sensor's own device: a power-off that is abandoned
+ * resumes those, and a sensor this device suspended is woken there like any
+ * other.
+ */
+#define IQS7211E_DEVICE_REF(inst) DEVICE_DT_INST_GET(inst),
+
+static const struct device *const iqs7211e_devices[] = {
+    DT_INST_FOREACH_STATUS_OKAY(IQS7211E_DEVICE_REF)
+};
+
+static int iqs7211e_early_pm_action(const struct device *dev, enum pm_device_action action)
+{
+    ARG_UNUSED(dev);
+
+    if (action == PM_DEVICE_ACTION_RESUME)
+    {
+        return 0;
+    }
+    if (action != PM_DEVICE_ACTION_SUSPEND)
+    {
+        return -ENOTSUP;
+    }
+
+    for (size_t i = 0; i < ARRAY_SIZE(iqs7211e_devices); i++)
+    {
+        const struct device *sensor = iqs7211e_devices[i];
+        struct iqs7211e_data *data = sensor->data;
+
+        if (!device_is_ready(sensor) || atomic_get(&data->suspended))
+        {
+            continue;
+        }
+        /* Best-effort like the suspend itself: a sensor this cannot put to
+         * sleep is left to its own turn, as before this device existed. */
+        (void)iqs7211e_pm_action(sensor, PM_DEVICE_ACTION_SUSPEND);
+    }
+    return 0;
+}
+
+static int iqs7211e_early_pm_init(const struct device *dev)
+{
+    ARG_UNUSED(dev);
+    return 0;
+}
+
+PM_DEVICE_DEFINE(iqs7211e_early_pm, iqs7211e_early_pm_action);
+
+DEVICE_DEFINE(iqs7211e_early_pm, "iqs7211e_early_pm", iqs7211e_early_pm_init,
+              PM_DEVICE_GET(iqs7211e_early_pm), NULL, NULL, POST_KERNEL,
+              CONFIG_IQS7211E_PM_EARLY_INIT_PRIORITY, NULL);
+
+#endif // CONFIG_PM_DEVICE

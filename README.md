@@ -1,6 +1,8 @@
 # zmk-iqs7211e-driver
 
-[[日本語]](README_JA.md)
+[![Test](https://github.com/amgskobo/zmk-iqs7211e-driver/actions/workflows/test.yml/badge.svg)](https://github.com/amgskobo/zmk-iqs7211e-driver/actions/workflows/test.yml)
+
+[日本語](README_JA.md)
 
 ## 1. Overview
 
@@ -222,6 +224,29 @@ also retries arming the RDY interrupt. An inactive RDY level is not considered
 recovered until the interrupt has actually been enabled, so the first touch
 after deep sleep cannot be left without an event source.
 
+The sensor keeps its power through everything that restarts only the SoC -
+the reset button, a firmware update, the watchdog, and a wake from System OFF -
+and with it whatever state it was in. That is event mode, where it raises RDY
+only for a touch, or the suspend that ZMK's idle sleep put it in (that path
+suspends devices in reverse init order, so the bus is still up), where it never
+raises RDY at all. Setup starts at the first RDY, so the driver does not wait
+for one: if the sensor has raised nothing 200 ms after boot, it forces a
+communication window and resets the sensor, which also clears a leftover
+suspend. The reset's own RDY then runs setup, ATI included, at boot. Left to
+the first touch, the ATI would run under that finger, and the reference taken
+there reports a contact that never lifts; a suspended sensor would leave the
+pad dead until its power was removed. A freshly powered sensor raises RDY by
+itself well within the 200 ms and is left alone.
+
+The sensor is put to sleep on both of ZMK's power-off paths. The sensor's own
+device comes after the I2C bus in init order, which is right for idle sleep's
+reverse-order suspend but leaves `&soft_off`, which suspends in init order,
+with the bus already down when the sensor's turn comes - so the sensor used to
+stay awake, at its active current, for as long as the keyboard was off. A small
+device ahead of the bus (`CONFIG_IQS7211E_PM_EARLY_INIT_PRIORITY`, 45) runs the
+same suspend first on that path; the sensor's own turn then finds it asleep and
+skips the write rather than waiting out a bus timeout.
+
 The production defaults are normally sufficient:
 
 ```kconfig
@@ -251,11 +276,7 @@ keymap, GitHub Actions, and validation setup.
 
 ## 4. HW and Dimensions
 
-### 4.1 Reference panel front
-
-### 4.2 Reference panel back
-
-### 4.3 Pin Assignment (all +3V3 logic)
+### 4.1 Pin Assignment (all +3V3 logic)
 
 | PIN | value | info |
 |-----|-------|------|
@@ -266,7 +287,7 @@ keymap, GitHub Actions, and validation setup.
 |5  |  SDA | i2c data|
 |6  |  SCL | i2c clock |
 
-### 4.4 BOMs
+### 4.2 BOMs
 
 | Property | Value | Type | Qty | Link |
 |----------|------|---------|-------------|-----|
@@ -275,10 +296,10 @@ keymap, GitHub Actions, and validation setup.
 | `C6` | 4.7uF | 0805_SMD | 1 | |
 | `C7` | 100nF | 0805_SMD | 1 | |
 | `R1,R2,R3` | 4.7k | 0805_SMD | 3| |
-| `J1` | PinHeader_2x03_P2.54mm_Vertical | 2x3pin 2.54mm pitch PH3.5mm height| 1 | [aliexpress](https://ja.aliexpress.com/item/1005003263426999.html?spm=a2g0o.order_list.order_list_main.16.5d86585aR1YHtk&gatewayAdapt=glo2jpn) |
+| `J1` | PinHeader_2x03_P2.54mm_Vertical | 2x3pin 2.54mm pitch PH3.5mm height| 1 | [aliexpress](https://ja.aliexpress.com/item/1005003263426999.html) |
 | `U1` | IQS7211E001QNR |  IQS7211E001QNR(20-QFN)| 1| [digikey](https://www.digikey.jp/en/products/detail/azoteq-pty-ltd/IQS7211E001QNR/18627341)|
 
-### 4.5 PCB Specifications
+### 4.3 PCB Specifications
 
 The PCB used with this driver is a 2-layer FR4 board with a standard thickness of 1.6 mm. The recommended finish for the PCB is ENIG (Electroless Nickel Immersion Gold).
 
@@ -286,13 +307,13 @@ The ENIG finish provides high durability for the edges of the trackpad and conne
 
 Please note that if the PCB thickness is different from 1.6 mm, it may affect the installation and feel of the trackpad. Also, the ENIG finish may incur higher costs compared to standard finishes.
 
-### 4.6 Trackpad Surface Material
+### 4.4 Trackpad Surface Material
 
 Make sure to attach some kind of material to the trackpad surface.
 The trackpad will not function properly if used without any material attached.
 Typically, we recommend a film thickness of 1-2 mm.
 
-### 4.7 TP Configuration Examples
+### 4.5 TP Configuration Examples
 
 You can modify the sensor behavior by editing the `src/iqs7211e_init.h` file provided by Azoteq. This file contains all necessary initialization and gesture settings.
 Edit values here to adjust:
@@ -305,3 +326,132 @@ Edit values here to adjust:
 For the current datasheet and design references, use Azoteq's official
 [IQS7211E product page](https://www.azoteq.com/product/iqs7211e/) and
 [application-notes index](https://www.azoteq.com/design/application-notes/).
+
+## 5. Coordinate Pipeline
+
+This section is maintenance material for developers and agents who change the
+implementation. It records how the driver treats coordinates, what each setting
+trades against what, and how to verify a profile for a given panel.
+
+### 5.1 Processing Stages
+
+One report is processed in this order:
+
+1. **One 12-byte read** — Gesture through Finger 1 Area are fixed by a single I2C
+   transfer. Reading them separately would need two communication windows for
+   one event, and one of them could be missed.
+2. **Contact consistency** — `fingers > 0`, X/Y other than `0xFFFF`, and non-zero
+   strength and area are checked together.
+3. **First contact** — A contact never starts from invalid coordinates. Once a
+   contact is established, a transient invalid frame keeps the previous value
+   instead of ending the contact.
+4. **Rubber-band deadband** — The output follows the input from deadband pixels
+   behind.
+5. **Three-sample median** — Removes single outliers.
+
+Absolute and relative modes share stages 2-5. They branch into absolute
+reporting and relative deltas only after the common filtered X/Y has been
+produced. Moving that boundary forward gives the two modes different coordinate
+paths for the same finger movement, so confirm equivalence with
+`test_absolute_relative_parity` whenever it changes.
+
+### 5.2 Parameters and State
+
+The coordinate filter's tuning value is exposed as a build-time Device Tree
+property.
+
+| Effective setting | Default | Device Tree property that overrides it |
+|---|---:|---|
+| Rubber-band width | 8 | `jitter-deadband` |
+
+Keep the binding default, the type in `struct iqs7211e_config`, and the
+`DT_INST_PROP_OR` fallback identical. The driver default is
+`jitter-deadband = 8`. Measure it against the hardware — panel, electrodes and
+surface material — and override it in the board overlay where needed.
+
+Mutable state such as the deadband and median history lives in
+`struct iqs7211e_data` and is never mixed into the read-only device config.
+
+`touch-verify-interval-ms` is a sensor liveness check that runs in both absolute
+and relative modes. It does not depend on the coordinate filter or on layers,
+and releases a stale contact when it detects a physical release or a read
+failure.
+
+### 5.3 Why Each Stage Exists
+
+#### Why no host-side IIR is stacked
+
+The IQS7211E runs MAV and a dynamic IIR on the chip (datasheet 7.8). Stacking
+another IIR on the host doubles the smoothing, which shrinks the movement path
+and adds lag. This driver treats the on-chip smoothing as the final result and
+has no host-side IIR.
+
+#### Why the deadband is kept minimal
+
+The rubber-band deadband absorbs small tremors at rest and in motion, but a
+larger value adds the same per-axis lag to intended movement. Use the smallest
+value that suppresses the measured resting noise, balanced against tracking. An
+extra gate on the TP Movement flag is not used: measurements showed no
+meaningful improvement, and raising the number of confirming reports increased
+latency and catch-up jumps.
+
+### 5.4 Verifying Fixed Panel Values
+
+#### Touch SET / CLEAR
+
+The threshold is `Threshold = Reference × (1 + Multiplier / 128)`
+(datasheet 5.5.1). A larger multiplier makes the panel less sensitive.
+
+The basic procedure from AZD123 4.3.1 and AZD128 5.5.5 is:
+
+1. Lightly press **between four channels** with a small finger, at a point
+   where the four deltas are about equal.
+2. Put SET below the smallest of the four channels.
+3. Put CLEAR below SET to create hysteresis.
+
+If a hover reaches the same level as a light touch, this procedure and clearing
+false detections can conflict: clearing a false detection needs CLEAR above the
+hover level, but SET has to stay above CLEAR. When that conflict occurs, record
+which side was favoured and why.
+
+#### jitter-deadband
+
+The lower bound is the value that absorbs the residual displacement observed in
+a resting log. The upper bound is the value that does not swallow the smallest
+intentional movement. Replay a resting log and a small-circle log with the same
+setting, and decide by comparing movement at rest, path length in motion,
+maximum step and tracking lag.
+
+#### ATI
+
+Following AZD123 4.2.1 and AZD128 5.5.4, confirm that:
+
+- ATI Compensation sits near the middle of 0-1023
+- the ATI Error flag (INFO_FLAGS bit 3) is not set
+- the reference is within `ATI target ± Reference drift limit`
+- the delta on contact is sufficient for the application
+
+Normally leave the coarse divider / multiplier at index 0 of AZD123 table 4.1 and
+tune with the fine divider. Do not lower the fine divider below 16.
+
+#### X/Y Trim
+
+AZD128 6.4 requires that both axes reach coordinate 0 and the maximum
+resolution. Check the four corners and the four edges separately. A trim acts by
+the same amount on both ends of one axis, so an asymmetric excess at only one
+end cannot be removed with it.
+
+### 5.5 Checks After a Change
+
+1. Touch the centre lightly and hold still: one contact, zero releases in
+   between, and almost no output movement.
+2. Tap lightly and repeatedly: the numbers of contacts and releases match.
+3. Slow straight lines, circles and fast back-and-forth strokes: zero
+   intermediate releases, no missing IRQ/work/report, and zero I2C errors.
+4. `tests/filter/run.sh` passes, including the absolute/relative parity test.
+5. Compare the final firmware's FLASH/RAM with the previous build.
+
+### 5.6 References
+
+- [IQS7211E product page](https://www.azoteq.com/product/iqs7211e/): datasheet, AZD123
+- [Application notes index](https://www.azoteq.com/design/application-notes/): AZD128

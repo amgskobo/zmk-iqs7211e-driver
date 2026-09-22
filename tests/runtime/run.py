@@ -10,7 +10,7 @@ names = ["iqs7211e_report_abs_coordinates", "iqs7211e_release_click",
          "iqs7211e_click_work_handler", "iqs7211e_report_rel_coordinates",
          "iqs7211e_abort_touch_after_report_failure",
          "iqs7211e_touch_verify_chain_alive",
-         "iqs7211e_report_data"]
+         "iqs7211e_report_data", "iqs7211e_boot_kick_work_handler"]
 functions = []
 for name in names:
     # Definitions, rather than forward declarations; braces at column zero
