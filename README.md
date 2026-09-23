@@ -96,7 +96,13 @@ expected relative delta independently from the absolute filtered coordinate stre
 
 ```sh
 sh tests/filter/run.sh
+python3 tests/runtime/run.py
 ```
+
+CI runs optimized, ASan/UBSan and gcov variants. It requires 100% line and
+branch coverage of `iqs7211e_filter.c`. The fault-injection coverage report
+is for extracted driver functions plus their host harness, not for the entire
+I2C/IRQ driver; the uncovered paths remain visible in CI output.
 
 Implementation and maintenance notes for the coordinate pipeline are included in the
 [Japanese README](README_JA.md#5-座標パイプライン).

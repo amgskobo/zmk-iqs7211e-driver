@@ -349,6 +349,11 @@ AZD128 6.4の基準は、両軸で座標0と最大解像度へ到達できるこ
 
 ### 5.5 変更時の確認項目
 
+CI は filter と故障注入テストを最適化版・ASan/UBSan 版・gcov 版で実行します。
+`iqs7211e_filter.c` の行・分岐カバレッジ 100% を条件とします。故障注入の
+カバレッジは抽出した driver 関数と host harness の範囲であり、I²C/IRQ driver
+全体の値ではありません。
+
 1. 中央へ軽く触れて静止し、contactが1回、途中releaseが0回、出力移動がほぼ0であること
 2. 軽いタップを反復し、contact数とrelease数が一致すること
 3. 低速直線、円、高速往復で、途中release、IRQ/work/reportの欠落、I2C errorが0であること

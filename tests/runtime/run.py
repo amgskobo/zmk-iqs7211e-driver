@@ -29,9 +29,12 @@ with tempfile.TemporaryDirectory(prefix="iqs-runtime-") as folder:
         ("optimized", ["-O2"]),
         ("sanitized", ["-O1", "-g", "-fno-omit-frame-pointer",
                        "-fsanitize=address,undefined", "-fno-sanitize-recover=all"]),
+        ("coverage", ["-O0", "--coverage"]),
     ):
         binary = pathlib.Path(folder) / variant
         subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror",
                         *flags, "-I" + str(root / "src"), str(unit),
                         str(root / "src/iqs7211e_filter.c"), "-o", str(binary)], check=True)
         subprocess.run([str(binary)], check=True)
+    subprocess.run(["gcov", "-b", "-c", "-o", str(pathlib.Path(folder) / "coverage-test.gcno"),
+                    str(unit)], cwd=folder, check=True)
