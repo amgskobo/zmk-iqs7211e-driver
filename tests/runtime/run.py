@@ -25,8 +25,13 @@ harness = (root / "tests/runtime/harness.c").read_text()
 with tempfile.TemporaryDirectory(prefix="iqs-runtime-") as folder:
     unit = pathlib.Path(folder) / "test.c"
     unit.write_text(harness.replace("/* DRIVER_FUNCTIONS */", "\n".join(functions)))
-    binary = pathlib.Path(folder) / "test"
-    subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror",
-                    "-I" + str(root / "src"), str(unit), str(root / "src/iqs7211e_filter.c"),
-                    "-o", str(binary)], check=True)
-    subprocess.run([str(binary)], check=True)
+    for variant, flags in (
+        ("optimized", ["-O2"]),
+        ("sanitized", ["-O1", "-g", "-fno-omit-frame-pointer",
+                       "-fsanitize=address,undefined", "-fno-sanitize-recover=all"]),
+    ):
+        binary = pathlib.Path(folder) / variant
+        subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror",
+                        *flags, "-I" + str(root / "src"), str(unit),
+                        str(root / "src/iqs7211e_filter.c"), "-o", str(binary)], check=True)
+        subprocess.run([str(binary)], check=True)

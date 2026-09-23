@@ -7,11 +7,19 @@
 set -eu
 
 repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
-binary="${TMPDIR:-/tmp}/iqs7211e-filter-test"
+build_dir=$(mktemp -d "${TMPDIR:-/tmp}/iqs7211e-filter-test.XXXXXX")
+trap 'rm -rf "$build_dir"' EXIT HUP INT TERM
 
-cc -std=c11 -Wall -Wextra -Werror \
-    -I"$repo_dir/src" \
-    "$repo_dir/tests/filter/test_filter.c" \
-    "$repo_dir/src/iqs7211e_filter.c" \
-    -o "$binary"
-"$binary"
+for variant in optimized sanitized; do
+    if [ "$variant" = sanitized ]; then
+        set -- -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined -fno-sanitize-recover=all
+    else
+        set -- -O2
+    fi
+    cc -std=c11 -Wall -Wextra -Werror "$@" \
+        -I"$repo_dir/src" \
+        "$repo_dir/tests/filter/test_filter.c" \
+        "$repo_dir/src/iqs7211e_filter.c" \
+        -o "$build_dir/$variant"
+    ASAN_OPTIONS=detect_leaks=0 "$build_dir/$variant"
+done
