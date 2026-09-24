@@ -10,7 +10,7 @@ on:
   pull_request:
   workflow_dispatch:
   schedule:
-    # Recheck moving upstream and DYA main branches even without local changes.
+    # Recheck host regression tests even without local changes.
     - cron: '0 2 * * 0'
 
 permissions:

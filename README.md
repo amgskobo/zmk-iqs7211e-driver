@@ -102,6 +102,8 @@ CI runs optimized, ASan/UBSan and gcov variants. It requires 100% line and
 branch coverage of `iqs7211e_filter.c` and of ten extracted fault/report
 functions from `iqs7211e.c`. The driver functions are measured separately
 from the host harness; this is not coverage of the entire I2C/IRQ driver.
+This module CI does not build a firmware fixture; compile the full board
+configuration with the local module override before release.
 
 Implementation and maintenance notes for the coordinate pipeline are included in the
 [Japanese README](README_JA.md#5-座標パイプライン).
