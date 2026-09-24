@@ -1,7 +1,9 @@
 Runtime regression tests
 ========================
 
-Run `python3 tests/runtime/run.py` with a native C compiler available as `cc`.
+Run `bash tests/run-host-docker.sh` for the CI-equivalent filter and runtime
+tests, or `python3 tests/runtime/run.py` with a native C compiler available as
+`cc` for this suite alone.
 The runner extracts the actual cleanup, report and click-worker
 functions from `src/iqs7211e.c` and compiles them with fault-injecting input and
 sensor stubs. It links the real coordinate filter implementation.
