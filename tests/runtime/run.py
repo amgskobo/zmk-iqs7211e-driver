@@ -45,7 +45,6 @@ with tempfile.TemporaryDirectory(prefix="iqs-runtime-") as folder:
     print(result.stdout, end="")
     source_report = result.stdout.split(f"File '{source_path}'", 1)[1]
     source_report = source_report.split("Creating ", 1)[0]
-    lines = float(re.search(r"Lines executed:([0-9.]+)%", source_report).group(1))
-    branches = float(re.search(r"Taken at least once:([0-9.]+)%", source_report).group(1))
-    if lines < 65.0 or branches < 50.0:
-        raise RuntimeError("IQS7211E fault-path coverage regressed below 65% lines / 50% branches")
+    if ("Lines executed:100.00%" not in source_report or
+            "Taken at least once:100.00%" not in source_report):
+        raise RuntimeError("IQS7211E extracted fault/report paths fell below 100% coverage")
