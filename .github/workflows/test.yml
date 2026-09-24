@@ -10,7 +10,7 @@ on:
   pull_request:
   workflow_dispatch:
   schedule:
-    # Recheck moving upstream and DYA main branches even without local changes.
+    # Recheck host regression tests even without local changes.
     - cron: '0 2 * * 0'
 
 permissions:
@@ -26,7 +26,5 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v5
-      - name: Filter tests
-        run: bash tests/filter/run.sh
-      - name: Runtime fault-injection tests
-        run: python3 tests/runtime/run.py
+      - name: Filter and fault-path coverage in pinned build image
+        run: bash tests/run-host-docker.sh

@@ -71,11 +71,14 @@ static struct k_work_delayable *k_work_delayable_from_work(struct k_work *w) {
     return CONTAINER_OF(w, struct k_work_delayable, work);
 }
 static void k_work_cancel_delayable(struct k_work_delayable *w) { (void)w; }
-static int scheduled, release_attempts, presses, fail_key, fail_abs;
+static int scheduled, release_attempts, presses, fail_key, fail_abs, fail_rel, fail_queue;
+static int fail_schedule;
 static struct k_work_delayable *last_scheduled;
 static int last_delay;
 static int iqs7211e_reschedule_work(struct k_work_delayable *w, int ms) {
-    last_scheduled = w; last_delay = ms; scheduled++; return 0;
+    last_scheduled = w; last_delay = ms; scheduled++;
+    if (fail_schedule) { fail_schedule--; return -5; }
+    return 0;
 }
 /* The RDY interrupt: whether it is armed, and how often it was re-armed. */
 static bool irq_armed = true;
@@ -112,10 +115,16 @@ static int input_report_abs(const struct device *dev, int code, int value, bool 
     return 0;
 }
 static int input_report_rel(const struct device *dev, int code, int value, bool sync, int wait) {
-    (void)dev; (void)code; (void)value; (void)sync; (void)wait; return 0;
+    (void)dev; (void)code; (void)value; (void)sync; (void)wait;
+    if (fail_rel) { fail_rel--; return -5; }
+    return 0;
 }
 static int fingers, gesture, queued_clicks;
-static int iqs7211e_queue_value_updates(struct iqs7211e_data *d) { (void)d; return 0; }
+static int iqs7211e_queue_value_updates(struct iqs7211e_data *d) {
+    (void)d;
+    if (fail_queue) { fail_queue--; return -5; }
+    return 0;
+}
 static int iqs7211e_get_num_fingers(struct iqs7211e_data *d) { (void)d; return fingers; }
 static int iqs7211e_get_touchpad_event(struct iqs7211e_data *d) { (void)d; return gesture; }
 static void iqs7211e_queue_clicks(struct iqs7211e_data *d, uint16_t button, uint8_t clicks) {
@@ -185,8 +194,147 @@ static void test_boot_kick(const struct device *dev) {
     assert(last_scheduled == &d.rdy_recheck_work && !irq_armed);
 }
 
+static void test_report_modes(struct iqs7211e_config *config, const struct device *dev) {
+    struct iqs7211e_data d = {.dev = dev, .finger_1_x = 500, .finger_1_y = 600,
+                             .finger_1_touch_strength = 100, .finger_1_area = 2};
+    fingers = 1; gesture = IQS7211E_GESTURE_NONE;
+    fail_queue = 1;
+    assert(iqs7211e_report_data(&d) == -5 && !d.last_touched_state);
+    d.info_flags[0] = IQS7211E_RUNTIME_SHOW_RESET_MASK;
+    assert(iqs7211e_report_data(&d) == 0);
+    d.info_flags[0] = 0;
+
+    d = (struct iqs7211e_data){.dev = dev, .last_touched_state = true};
+    fail_key = 1;
+    assert(iqs7211e_begin_runtime_reinitialization(&d) == -5);
+    d = (struct iqs7211e_data){.dev = dev, .last_touched_state = true,
+                              .click_edges = 1};
+    fail_key = 2;
+    assert(iqs7211e_begin_runtime_reinitialization(&d) == -5);
+    d = (struct iqs7211e_data){.dev = dev, .last_touched_state = true,
+                              .suspended = 1};
+    fail_key = 1;
+    assert(iqs7211e_release_touch(&d) == -5 && d.touch_release_pending);
+    config->touch_verify_interval_ms = 20;
+    d = (struct iqs7211e_data){.dev = dev};
+    assert(!iqs7211e_touch_verify_chain_alive(&d));
+    config->touch_verify_interval_ms = 0;
+    d = (struct iqs7211e_data){.dev = dev, .touch_release_pending = true};
+    fail_key = 1;
+    assert(iqs7211e_report_data(&d) == -5);
+
+    for (int rotation = 1; rotation <= 3; rotation++) {
+        d = (struct iqs7211e_data){.dev = dev, .finger_1_x = 500, .finger_1_y = 600,
+                                  .finger_1_touch_strength = 100, .finger_1_area = 2};
+        config->rotate_cw = rotation;
+        assert(iqs7211e_report_data(&d) == 0);
+        d.finger_1_x = 510;
+        d.finger_1_y = 610;
+        assert(iqs7211e_report_data(&d) == 0);
+        d.finger_1_touch_strength = 0;
+        assert(iqs7211e_report_data(&d) == 0 && d.last_touched_state);
+    }
+    config->rotate_cw = 0;
+
+    d = (struct iqs7211e_data){.dev = dev, .finger_1_x = 500, .finger_1_y = 600,
+                              .finger_1_area = 2};
+    assert(iqs7211e_report_data(&d) == 0 && !d.last_touched_state);
+    d.finger_1_touch_strength = 100;
+    gesture = IQS7211E_GESTURE_SINGLE_TAP;
+    assert(iqs7211e_report_data(&d) == 0);
+    gesture = IQS7211E_GESTURE_DOUBLE_TAP;
+    assert(iqs7211e_report_data(&d) == 0);
+    gesture = IQS7211E_GESTURE_TRIPLE_TAP;
+    assert(iqs7211e_report_data(&d) == 0);
+
+    config->single_tap = -1;
+    config->double_tap = -1;
+    config->triple_tap = -1;
+    for (int event = IQS7211E_GESTURE_SINGLE_TAP;
+         event <= IQS7211E_GESTURE_TRIPLE_TAP; event++) {
+        fingers = 1;
+        gesture = event;
+        assert(iqs7211e_report_data(&d) == 0);
+        fingers = 0;
+        assert(iqs7211e_report_data(&d) == 0);
+    }
+    config->single_tap = 0;
+    config->double_tap = 0;
+    config->triple_tap = 0;
+    fingers = 0;
+    gesture = IQS7211E_GESTURE_DOUBLE_TAP;
+    assert(iqs7211e_report_data(&d) == 0);
+    gesture = IQS7211E_GESTURE_TRIPLE_TAP;
+    assert(iqs7211e_report_data(&d) == 0);
+
+    fingers = 1; gesture = IQS7211E_GESTURE_NONE;
+    d = (struct iqs7211e_data){.dev = dev, .finger_1_x = 500, .finger_1_y = 600,
+                              .finger_1_touch_strength = 100, .finger_1_area = 2};
+    fail_key = 1;
+    assert(iqs7211e_report_data(&d) == -5);
+    config->touch_verify_interval_ms = 20;
+    assert(iqs7211e_report_data(&d) == 0);
+    assert(last_scheduled == &d.touch_verify_work);
+    config->touch_verify_interval_ms = 0;
+    fingers = 0;
+    fail_abs = 1;
+    assert(iqs7211e_report_data(&d) == -5 && d.touch_release_pending);
+    fingers = 1;
+    d = (struct iqs7211e_data){.dev = dev, .finger_1_x = 500, .finger_1_y = 600,
+                              .finger_1_touch_strength = 100, .finger_1_area = 2};
+    fail_abs = 1;
+    assert(iqs7211e_report_data(&d) == -5);
+    d = (struct iqs7211e_data){.dev = dev, .finger_1_x = 500, .finger_1_y = 600,
+                              .finger_1_touch_strength = 100, .finger_1_area = 2,
+                              .touch_count = 255, .last_touched_state = true};
+    assert(iqs7211e_report_data(&d) == 0 && d.touch_count == 255);
+
+    config->report_abs = false;
+    d = (struct iqs7211e_data){.dev = dev, .finger_1_x = 500, .finger_1_y = 600,
+                              .finger_1_touch_strength = 100, .finger_1_area = 2};
+    assert(iqs7211e_report_data(&d) == 0);
+    d.finger_1_x = 520;
+    assert(iqs7211e_report_data(&d) == 0);
+    d.finger_1_x = 530;
+    fail_rel = 1;
+    assert(iqs7211e_report_data(&d) == -5);
+    d = (struct iqs7211e_data){.dev = dev, .finger_1_x = 500, .finger_1_y = 600,
+                              .finger_1_touch_strength = 100, .finger_1_area = 2};
+    assert(iqs7211e_report_data(&d) == 0);
+    fingers = 0;
+    assert(iqs7211e_report_data(&d) == 0);
+    fingers = 1;
+    d = (struct iqs7211e_data){.dev = dev, .finger_1_x = 500, .finger_1_y = 600,
+                              .finger_1_touch_strength = 100, .finger_1_area = 2};
+    fail_rel = 1;
+    assert(iqs7211e_report_data(&d) == -5);
+    assert(iqs7211e_report_rel_coordinates(&d, 1, 2) == 0);
+    fail_rel = 1;
+    assert(iqs7211e_report_rel_coordinates(&d, 1, 2) == -5);
+    config->report_abs = true;
+}
+
+static void test_click_worker_failures(const struct device *dev) {
+    struct iqs7211e_data d = {.dev = dev, .click_edges = 2};
+    d.suspended = 1;
+    iqs7211e_click_work_handler(&d.click_work.work);
+    assert(d.click_edges == 2);
+    d.suspended = 0;
+    fail_key = 1;
+    fail_schedule = 1;
+    iqs7211e_click_work_handler(&d.click_work.work);
+    d.click_edges = 2;
+    iqs7211e_click_work_handler(&d.click_work.work);
+    assert(d.click_edges == 1);
+    fail_key = 1;
+    iqs7211e_click_work_handler(&d.click_work.work);
+    d.click_edges = 2;
+    fail_schedule = 1;
+    iqs7211e_click_work_handler(&d.click_work.work);
+}
+
 int main(void) {
-    const struct iqs7211e_config config = {
+    struct iqs7211e_config config = {
         .report_abs = true, .single_tap = 0, .double_tap = 0, .triple_tap = 0,
     };
     const struct device dev = {.config = &config};
@@ -238,5 +386,7 @@ int main(void) {
     assert(!d.touch_release_pending && d.last_touched_state);
 
     test_boot_kick(&dev);
+    test_report_modes(&config, &dev);
+    test_click_worker_failures(&dev);
     puts("iqs7211e runtime fault-injection tests passed");
 }

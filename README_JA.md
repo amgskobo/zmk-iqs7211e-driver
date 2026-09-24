@@ -74,7 +74,7 @@
 デッドバンド、瞬間的な外れ値、接触開始時の初期化、一時的な無効座標、zero-delta時の相対速度、絶対・相対モードの座標同等性、runtime reset flagの検出、モード別の`INPUT_BTN_TOUCH` policyは次のhost testで確認できます。相対deltaは、絶対モードと同じfiltered座標から導出されることを確認します。
 
 ```sh
-sh tests/filter/run.sh
+bash tests/run-host-docker.sh
 ```
 
 ## 3. インストール (GitHub Actions)
@@ -350,14 +350,16 @@ AZD128 6.4の基準は、両軸で座標0と最大解像度へ到達できるこ
 ### 5.5 変更時の確認項目
 
 CI は filter と故障注入テストを最適化版・ASan/UBSan 版・gcov 版で実行します。
-`iqs7211e_filter.c` の行・分岐カバレッジ 100% を条件とします。故障注入の
-カバレッジは抽出した driver 関数と host harness の範囲であり、I²C/IRQ driver
-全体の値ではありません。
+`iqs7211e_filter.c` と `iqs7211e.c` から抽出した故障対応・報告の10関数に、
+それぞれ行・分岐カバレッジ 100% を要求します。driver 関数と host harness は
+別々に計測します。I²C/IRQ を含む driver 全体の 100% ではありません。
+このモジュール単独の CI にはファームウェア統合ビルドがありません。公開前に
+ローカルモジュール指定で基板設定全体をビルドしてください。
 
 1. 中央へ軽く触れて静止し、contactが1回、途中releaseが0回、出力移動がほぼ0であること
 2. 軽いタップを反復し、contact数とrelease数が一致すること
 3. 低速直線、円、高速往復で、途中release、IRQ/work/reportの欠落、I2C errorが0であること
-4. `tests/filter/run.sh`が通り、絶対・相対のparityテストが成功すること
+4. `tests/run-host-docker.sh` が通り、絶対・相対のparityテストが成功すること
 5. 最終ファームウェアのFLASH/RAMを変更前と比較すること
 
 ### 5.6 参照箇所
