@@ -18,3 +18,9 @@ Covered sequences:
 The stubs do not simulate Zephyr thread scheduling, the physical sensor gesture
 classifier, USB/BLE delivery, or downstream processor routing. Firmware builds
 and physical-device checks complement these tests.
+
+The gcov report now attributes extracted functions to their original driver
+lines, separately from the harness. CI prevents regression below 65% line and
+50% branch coverage of those extracted functions (currently about 67% / 52%).
+This deliberately does not claim whole-driver coverage; the unsimulated sensor
+and orientation paths remain targets for additional tests.
