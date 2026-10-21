@@ -1,0 +1,18 @@
+#include <behaviors.dtsi>
+#include <dt-bindings/zmk/keys.h>
+/ { keymap { compatible = "zmk,keymap"; default_layer { bindings = <&kp A &kp B &kp C &kp D &kp E &kp F &kp G &kp H &kp I &kp J &kp K>; }; }; };
+&i2c0 {
+    status = "okay";
+    pinctrl-0 = <&i2c0_default>;
+    pinctrl-1 = <&i2c0_sleep>;
+    pinctrl-names = "default", "sleep";
+    sensor: trackpad@56 {
+        compatible = "azoteq,iqs7211e";
+        reg = <0x56>;
+        irq-gpios = <&gpio0 6 GPIO_ACTIVE_HIGH>;
+        report-abs;
+        rotate-cw = <3>;
+        jitter-deadband = <8>;
+        touch-verify-interval-ms = <120>;
+    };
+};

@@ -1,0 +1,4 @@
+name: iqs-kernel-test
+build:
+  cmake: .
+  kconfig: Kconfig

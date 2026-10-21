@@ -20,6 +20,10 @@ concurrency:
   group: test-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
+env:
+  ZMK_TEST_IMAGE: zmkfirmware/zmk-build-arm@sha256:edb1c953438c6f720ddb79c3762f3972013b7fbbaf4fff3592fc869983e7afc5
+  ZMK_TEST_MODE: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'full' || 'quick' }}
+
 jobs:
   host-tests:
     runs-on: ubuntu-latest

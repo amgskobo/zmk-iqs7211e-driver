@@ -1,2 +1,6 @@
 .DS_Store
 .vscode
+
+# Python test caches
+__pycache__/
+*.py[cod]

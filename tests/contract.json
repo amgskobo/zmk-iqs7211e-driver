@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "host": [
+    "bash",
+    "tests/run-host-docker.sh"
+  ],
+  "contracts": [
+    {
+      "fixture": "tests/filter/run.sh",
+      "asserts": "Filtered and bypass boundaries, coordinate continuity, immediate motion/reversal/stop, independence/reset and normal-filter negative control"
+    },
+    {
+      "fixture": "tests/runtime/driver_harness.c",
+      "asserts": "Initialization, RDY/retry, I2C failures, recovery and PM state; initial failed-mask edge recovery, retained Event Mode after PM resume, interrupted boot recovery, own-queue rejection before side effects; runtime IRQ re-arm and rejected-suspend IRQ restore failures retain recovery; first failed mask preserves in-flight report ownership"
+    },
+    {
+      "fixture": "tests/runtime/reports_harness.c",
+      "asserts": "Contact and button report lifecycle in filtered and bypass builds; retained filtered traces and immediate unfiltered output/invalid/rotation/independence traces"
+    },
+    {
+      "fixture": "tests/integration/test_output_guard.py",
+      "asserts": "API/kernel result paths reject relative/existing/symlink/dangling paths before west, preserve sentinel and avoid creating dangling targets"
+    }
+  ],
+  "limits": "Stub I2C/GPIO/PM does not establish electrical timing, real IRQ delivery or shared-bus fairness.",
+  "execution": {
+    "default": "quick: every behavioral fixture and scenario under ASan/UBSan once",
+    "full": "ZMK_TEST_MODE=full: same scenarios plus optimized, coverage and existing 32-bit variants",
+    "integration": "owner native/DTS/API guards when interfaces or kernel contracts change; not a prerequisite for pure host behavior",
+    "transport": "actual ordered USB/BLE/split/power/reset evidence; archived simulation is not a passing substitute"
+  },
+  "kernel": {
+    "entry": "tests/kernel/run.py --workspace RESOLVED --core stock-zmk|dya --output FRESH",
+    "fixture": "tests/kernel/module/main.c",
+    "asserts": "Actual ordinary/delayed work cannot cancel itself synchronously; own-queue suspend returns EWOULDBLOCK without state changes, external suspend/resume remains usable; two cases x three identical-binary runs",
+    "negative_control": "--negative-control invalid-priority requires named compile rejection; no runtime execution is reported as a passing control",
+    "limits": "Actual kernel cancellation with GPIO emulation; no physical bus, sensor or downstream transport evidence"
+  }
+}

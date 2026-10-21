@@ -17,7 +17,6 @@ keymap layers or pointer regions:
 - Edge sliders can be added downstream with
   [`zmk-input-temp-layer-touch`](https://github.com/amgskobo/zmk-input-temp-layer-touch),
   including independent left and right pads and delayed-tap suppression.
-- "Ultimate Quality" Rigor: Implemented mathematical boundary fixes (Off-by-one) and safe PM (Power Management) execution guards.
 
 ## 2. Device Tree Properties
 
@@ -53,6 +52,13 @@ on-chip MAV and Dynamic IIR rather than applying a second IIR on the host. All f
 reset at the start of every contact, and a temporarily invalid coordinate holds the previous
 output without advancing the filter. The default deadband is 8; a board
 only needs an override when its measurements call for it.
+
+For controlled diagnostic comparisons, `CONFIG_IQS7211E_FILTER_BYPASS=y`
+disables the host deadband, median and relative-delta average for every device
+and both report modes. The default is `n`, preserving the existing production
+behavior. Rotation, invalid-coordinate handling, contact/gesture lifecycle,
+sensor on-chip MAV/Dynamic IIR and report intervals remain unchanged. This is
+not raw electrode data and may expose more pointer noise.
 
 ### 2.2 Touch Verification
 
@@ -98,10 +104,15 @@ expected relative delta independently from the absolute filtered coordinate stre
 bash tests/run-host-docker.sh
 ```
 
-CI runs optimized, ASan/UBSan and gcov variants. It requires 100% line and
-branch coverage of `iqs7211e_filter.c` and of ten extracted fault/report
-functions from `iqs7211e.c`. The driver functions are measured separately
-from the host harness; this is not coverage of the entire I2C/IRQ driver.
+Push/PR CI runs every host scenario under ASan/UBSan. Scheduled/manual full
+runs also retain optimized and gcov variants, requiring 100% line and branch coverage of `iqs7211e_filter.c` and of every function in
+`iqs7211e.c`, lifted into two harnesses: the contact, click and cleanup
+functions against fault-injecting input stubs, and the setup state machine,
+bus helpers, RDY interrupt and recovery, touch verification and power
+management against a word-addressed model of the sensor's memory map, built
+with the driver's own header. The driver lines are measured separately from
+the harnesses. Zephyr's scheduling, the real bus timing and the sensor's
+gesture engine are not simulated.
 This module CI does not build a firmware fixture; compile the full board
 configuration with the local module override before release.
 
@@ -254,6 +265,21 @@ device ahead of the bus (`CONFIG_IQS7211E_PM_EARLY_INIT_PRIORITY`, 45) runs the
 same suspend first on that path; the sensor's own turn then finds it asleep and
 skips the write rather than waiting out a bus timeout.
 
+A normal device-PM resume keeps a completed setup: suspend retains the sensor
+memory map, so the next finger must not start another software reset/ATI cycle.
+The sensor performs its own wake reseed; a real `Show Reset` still triggers the
+full reset recovery. An interrupted setup restarts its silent-sensor timer and
+retry state. See [datasheet section 10.2](https://www.azoteq.com/images/stories/pdf/iqs7211e_datasheet.pdf).
+
+If the first interrupt mask fails during suspend, the driver restores the
+interrupt and schedules a level recheck to recover an edge seen while suspended.
+Suspend requested from the driver's own queue returns `-EWOULDBLOCK` before
+changing state: callbacks must defer that request to another thread rather than
+wait for their own completion. Ordinary PM callers retain synchronous draining.
+Runtime interrupt-arm failures keep the retry chain alive; failed device
+initialization still reports its error. The selected work-queue priority is checked against the configured Zephyr
+priority counts at build time; without cooperative priorities the default is 0.
+
 The production defaults are normally sufficient:
 
 ```kconfig
@@ -261,11 +287,9 @@ CONFIG_IQS7211E_WORKQUEUE_STACK_SIZE=1536
 CONFIG_IQS7211E_WORKQUEUE_PRIORITY=-1
 ```
 
-For a diagnostic build, enable
-`CONFIG_IQS7211E_WORKQUEUE_STACK_USAGE=y`. The driver then logs a new stack
-high-water mark when peak usage increases. Measure representative movement,
-tap sequences, a held contact with touch verification, and suspend/resume before
-reducing the stack size. The diagnostic option is disabled by default.
+The former optional stack high-water collector has been retired. Queue stack
+size and priority remain explicit configuration values; physical stack margin
+requires separate board validation.
 
 ### 3.4 Build Firmware
 
@@ -274,8 +298,8 @@ The GitHub Actions workflow automatically builds the firmware and generates arti
 
 ### 3.5 ZMK Studio
 
-The driver supports ZMK Studio, including Studio layer reordering: its layer
-properties use stable keymap layer IDs rather than Studio's displayed order.
+The driver emits ordinary ZMK input and does not own keymap layers. Layer
+reordering and stable layer IDs belong to the downstream input processors.
 The trackpad configuration and input-processor routing remain firmware
 configuration, while Studio edits ordinary key bindings at runtime. See
 [Using the IQS7211E driver with ZMK Studio](docs/zmk-studio.md) for the exact
@@ -462,3 +486,17 @@ end cannot be removed with it.
 
 - [IQS7211E product page](https://www.azoteq.com/product/iqs7211e/): datasheet, AZD123
 - [Application notes index](https://www.azoteq.com/design/application-notes/): AZD128
+
+
+## Current test entry points (2026-10-05)
+
+Timing/cadence aggregation, periodic FLOW counters/logs and optional stack
+high-water collection were retired on2026-10-16. There is no measurement
+configuration switch. Sensor filters, report delivery, PM/recovery and the
+boot IRQ-seen latch remain. Ordinary state/error logs remain available.
+Retired assertions/source and their status are mapped in [tests/retired-measurements.md](tests/retired-measurements.md).
+
+See [the module-owned test guide](tests/README.md). The default host command
+executes every behavior scenario once under ASan/UBSan. Set `ZMK_TEST_MODE=full`
+for all retained coverage/ABI variants. Legacy simulation has been removed
+from the active suite; its source/snapshots remain externally archived.

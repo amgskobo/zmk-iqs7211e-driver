@@ -167,12 +167,7 @@ struct iqs7211e_data
     bool last_touched_state;
     bool touch_release_pending;
     bool touch_verify_pending;
-    atomic_t diagnostic_irq_count;
-    atomic_t diagnostic_work_count;
-    atomic_t diagnostic_report_count;
-    atomic_t diagnostic_rdy_low_count;
-    atomic_t diagnostic_rdy_recovery_count;
-    int diagnostic_last_report_ret;
+    atomic_t boot_irq_seen;
     struct k_work_delayable touch_verify_work;
     struct k_work_sync touch_verify_work_sync;
     struct k_work_delayable rdy_recheck_work;

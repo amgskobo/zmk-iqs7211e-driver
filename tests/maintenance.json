@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "owner": "zmk-iqs7211e-driver",
+  "supported_cores": [
+    "stock-zmk",
+    "dya"
+  ],
+  "unsupported_core_status": "NOT APPLICABLE",
+  "commands": [
+    "bash tests/run-host-docker.sh",
+    "python3 tests/integration/run.py --workspace /absolute/resolved/workspace --core stock-zmk|dya --output /absolute/new/output",
+    "python3 -m unittest discover -s tests/integration -p test_*.py -v; fresh output paths before west",
+    "python3 tests/kernel/run.py --workspace RESOLVED --core stock-zmk|dya --output FRESH; ordinary/click own-queue PM rejection and external recovery, three identical-binary repeats",
+    "python3 tests/kernel/run.py --workspace RESOLVED --core dya --output FRESH --negative-control invalid-priority; named build-time rejection"
+  ],
+  "coverage_map": "tests/contract.json",
+  "preserved_assertions": "Relocated fixtures retain their prior assertions; no snapshot auto-accept or unique assertion removal.",
+  "execution": {
+    "quick": "All behavioral scenarios once; sanitizer variants where supported.",
+    "full": "Same scenarios plus relevant optimization, ABI, role, kernel and supported-core checks.",
+    "outputs": "Use a fresh evidence directory; existing evidence is never overwritten."
+  },
+  "gaps": [
+    "Physical USB/BLE/split delivery, timing, power and retention require matching production-board evidence.",
+    "Timing/FLOW/stack measurement retired; exact source and unique assertion map in tests/retired-measurements.md.",
+    "Complete-source native PM fixture uses actual work cancellation and GPIO emulation; no electrical I2C/RDY, sensor wake reseed, shared-bus timing or physical PM acceptance.",
+    "GitHub host CI does not run the separately documented pinned native/API or consuming board builds."
+  ]
+}

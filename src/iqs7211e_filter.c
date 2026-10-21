@@ -13,6 +13,7 @@ bool iqs7211e_coordinate_sample_valid(uint8_t fingers, uint16_t x, uint16_t y,
     return fingers > 0U && x <= max_x && y <= max_y && strength > 0U && area > 0U;
 }
 
+#if !defined(CONFIG_IQS7211E_FILTER_BYPASS)
 static uint16_t median3(uint16_t a, uint16_t b, uint16_t c)
 {
     if (a > b)
@@ -28,6 +29,7 @@ static uint16_t median3(uint16_t a, uint16_t b, uint16_t c)
 
     return (a > b) ? a : b;
 }
+#endif
 
 void iqs7211e_axis_filter_reset(struct iqs7211e_axis_filter *state, uint16_t sample)
 {
@@ -40,6 +42,11 @@ struct iqs7211e_axis_filter_result
 iqs7211e_axis_filter_apply(struct iqs7211e_axis_filter *state, uint16_t sample,
                           uint16_t deadband)
 {
+#if defined(CONFIG_IQS7211E_FILTER_BYPASS)
+    (void)deadband;
+    iqs7211e_axis_filter_reset(state, sample);
+    return (struct iqs7211e_axis_filter_result){.gated = sample, .filtered = sample};
+#else
     int32_t delta = (int32_t)sample - state->gated;
 
     if (delta > deadband)
@@ -60,6 +67,7 @@ iqs7211e_axis_filter_apply(struct iqs7211e_axis_filter *state, uint16_t sample,
     state->median_prev_1 = state->gated;
 
     return result;
+#endif
 }
 
 struct iqs7211e_relative_axis_result
@@ -68,8 +76,13 @@ iqs7211e_relative_axis_apply(int16_t current, int16_t previous,
 {
     int16_t delta = (int16_t)((int32_t)current - previous);
 
+#if defined(CONFIG_IQS7211E_FILTER_BYPASS)
+    (void)previous_delta;
+    return (struct iqs7211e_relative_axis_result){.delta = delta, .smoothed = delta};
+#else
     return (struct iqs7211e_relative_axis_result){
         .delta = delta,
         .smoothed = (int16_t)(((int32_t)delta + previous_delta) / 2),
     };
+#endif
 }

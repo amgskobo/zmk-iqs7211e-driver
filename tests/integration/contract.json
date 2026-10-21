@@ -1,0 +1,36 @@
+{
+  "shield": "tester_xiao",
+  "config": [
+    "CONFIG_IQS7211E=y",
+    "CONFIG_PM_DEVICE=y",
+    "CONFIG_ZMK_POINTING=y"
+  ],
+  "sources": [
+    "src/iqs7211e.c",
+    "src/iqs7211e_filter.c"
+  ],
+  "variants": [
+    {
+      "name": "absolute"
+    },
+    {
+      "name": "relative",
+      "extra_overlay": "tests/integration/relative.overlay"
+    },
+    {
+      "name": "absolute-unfiltered",
+      "extra_conf": "tests/integration/unfiltered.conf",
+      "config": [
+        "CONFIG_IQS7211E_FILTER_BYPASS=y"
+      ]
+    },
+    {
+      "name": "relative-unfiltered",
+      "extra_overlay": "tests/integration/relative.overlay",
+      "extra_conf": "tests/integration/unfiltered.conf",
+      "config": [
+        "CONFIG_IQS7211E_FILTER_BYPASS=y"
+      ]
+    }
+  ]
+}
