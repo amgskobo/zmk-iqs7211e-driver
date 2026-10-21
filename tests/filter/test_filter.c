@@ -258,6 +258,31 @@ static void test_coordinate_validity(void)
     CHECK(!iqs7211e_coordinate_sample_valid(1, 500, UINT16_MAX, 300, 2, max_x, max_y));
     CHECK(!iqs7211e_coordinate_sample_valid(1, 500, 500, 0, 2, max_x, max_y));
     CHECK(!iqs7211e_coordinate_sample_valid(1, 500, 500, 300, 0, max_x, max_y));
+    /* The weakest signal and the smallest area the part reports still count. */
+    CHECK(iqs7211e_coordinate_sample_valid(1, 500, 500, 1, 1, max_x, max_y));
+}
+
+/* The median of the newest sample and the two before it, in any order. */
+static void test_median_of_three_in_every_order(void)
+{
+    static const uint16_t orders[6][3] = {
+        {10, 20, 30}, {10, 30, 20}, {20, 10, 30}, {20, 30, 10}, {30, 10, 20}, {30, 20, 10},
+    };
+
+    for (int i = 0; i < 6; i++) {
+        struct iqs7211e_axis_filter state;
+
+        /* A seed far from all three, so a history that failed to move on
+         * would show in the result. */
+        iqs7211e_axis_filter_reset(&state, 900);
+        (void)iqs7211e_axis_filter_apply(&state, orders[i][0], 0);
+        (void)iqs7211e_axis_filter_apply(&state, orders[i][1], 0);
+        struct iqs7211e_axis_filter_result result =
+            iqs7211e_axis_filter_apply(&state, orders[i][2], 0);
+        CHECK(result.gated == orders[i][2]);
+        CHECK(result.filtered == 20);
+        CHECK(state.median_prev_1 == orders[i][2] && state.median_prev_2 == orders[i][1]);
+    }
 }
 
 static void test_touch_state_reporting_policy(void)
@@ -284,6 +309,7 @@ int main(void)
     test_absolute_relative_parity();
     test_zero_delta_drains_relative_velocity();
     test_coordinate_validity();
+    test_median_of_three_in_every_order();
     test_touch_state_reporting_policy();
     test_runtime_show_reset_detection();
     puts("iqs7211e host tests passed");

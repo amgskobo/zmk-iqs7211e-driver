@@ -74,7 +74,7 @@
 デッドバンド、瞬間的な外れ値、接触開始時の初期化、一時的な無効座標、zero-delta時の相対速度、絶対・相対モードの座標同等性、runtime reset flagの検出、モード別の`INPUT_BTN_TOUCH` policyは次のhost testで確認できます。相対deltaは、絶対モードと同じfiltered座標から導出されることを確認します。
 
 ```sh
-sh tests/filter/run.sh
+bash tests/run-host-docker.sh
 ```
 
 ## 3. インストール (GitHub Actions)
@@ -195,6 +195,10 @@ device PM が GPIO controller より先に driver を resume した場合は、�
 
 センサーは ZMK の 2 つの電源オフ経路のどちらでも休止させます。センサー自身のデバイスは init 順で I2C bus より後にあり、アイドルスリープの逆順 suspend ではそれで正しく動きますが、init 順に suspend する `&soft_off` では、センサーの番が来たときには bus が止まっています。そのためセンサーは、キーボードがオフの間ずっと動作時の電流で動き続けていました。bus より前に置いた小さなデバイス(`CONFIG_IQS7211E_PM_EARLY_INIT_PRIORITY`、45)がこの経路で同じ suspend を先に実行し、センサー自身の番では休止済みなのを確認して、bus のタイムアウトを待つ書き込みを省きます。
 
+通常の device PM 復帰では、完了済みのセットアップを保持します。suspend でセンサーの設定は残るため、次の指で再びソフトウェアリセット・ATI を始めません。センサー自身の復帰時 reseed はそのままで、実際の `Show Reset` は従来どおり再初期化します。初期化途中で休止した場合は、無応答センサーの復旧タイマーと試行状態を開始し直します。[データシート10.2節](https://www.azoteq.com/images/stories/pdf/iqs7211e_datasheet.pdf)を参照してください。
+
+suspend 開始時に割り込みの停止が失敗した場合も、割り込みを復旧して RDY のレベルを再確認します。driver 自身の作業キューからの suspend は、状態変更前に `-EWOULDBLOCK` を返します。callback は別スレッドへ要求を渡してください。通常の PM 呼び出しでは従来どおり処理と解除を待ちます。作業キュー優先度は Zephyr の設定範囲をビルド時に検査し、cooperative priority がない構成での既定値は0です。
+
 通常は次の production 既定値のままで使用します。
 
 ```kconfig
@@ -202,7 +206,6 @@ CONFIG_IQS7211E_WORKQUEUE_STACK_SIZE=1536
 CONFIG_IQS7211E_WORKQUEUE_PRIORITY=-1
 ```
 
-スタックを実測する診断 firmware では `CONFIG_IQS7211E_WORKQUEUE_STACK_USAGE=y` を有効にします。peak 使用量が増えるたびに high-water mark をログへ出します。移動、連続 tap、接触を保持した状態での touch verify、suspend/resume を一通り実行してから stack size を減らしてください。この診断設定は既定では無効です。
 
 ### 3.4 ファームウェアのビルド
 
@@ -349,18 +352,31 @@ AZD128 6.4の基準は、両軸で座標0と最大解像度へ到達できるこ
 
 ### 5.5 変更時の確認項目
 
-CI は filter と故障注入テストを最適化版・ASan/UBSan 版・gcov 版で実行します。
-`iqs7211e_filter.c` の行・分岐カバレッジ 100% を条件とします。故障注入の
-カバレッジは抽出した driver 関数と host harness の範囲であり、I²C/IRQ driver
-全体の値ではありません。
+push/PR の CI は全ホストシナリオを ASan/UBSan 版で実行します。定期・手動の full 実行は最適化版と gcov 版も保持し、
+`iqs7211e_filter.c` と `iqs7211e.c` の全関数に行・分岐カバレッジ 100% を要求します。
+関数は 2 つのハーネスに取り出します。接触・クリック・後始末の関数は故障注入する入力スタブで、
+初期化の状態機械、バス処理、RDY 割り込みと復旧、タッチ検証、電源管理はセンサーの
+メモリマップ(ワード単位)のモデルと driver 自身のヘッダーで確認します。driver 関数と
+ハーネスは別々に計測します。Zephyr のスケジューリング、実際のバスのタイミング、
+センサーのジェスチャー判定は模擬しません。
+このモジュール単独の CI にはファームウェア統合ビルドがありません。公開前に
+ローカルモジュール指定で基板設定全体をビルドしてください。
 
 1. 中央へ軽く触れて静止し、contactが1回、途中releaseが0回、出力移動がほぼ0であること
 2. 軽いタップを反復し、contact数とrelease数が一致すること
 3. 低速直線、円、高速往復で、途中release、IRQ/work/reportの欠落、I2C errorが0であること
-4. `tests/filter/run.sh`が通り、絶対・相対のparityテストが成功すること
+4. `tests/run-host-docker.sh` が通り、絶対・相対のparityテストが成功すること
 5. 最終ファームウェアのFLASH/RAMを変更前と比較すること
 
 ### 5.6 参照箇所
 
 - [IQS7211E製品ページ](https://www.azoteq.com/product/iqs7211e/): Datasheet、AZD123
 - [Application Notes一覧](https://www.azoteq.com/design/application-notes/): AZD128
+
+
+## Current test entry points (2026-10-05)
+
+See [the module-owned test guide](tests/README.md). The default host command
+executes every behavior scenario once under ASan/UBSan. Set `ZMK_TEST_MODE=full`
+for all retained coverage/ABI variants. Legacy simulation has been removed
+from the active suite; its source/snapshots remain externally archived.
