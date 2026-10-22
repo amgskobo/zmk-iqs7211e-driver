@@ -160,6 +160,7 @@ def body_end(source, opening):
 def misses(gcov_text, ranges):
     """Count lines and branches inside ranges; list what never ran."""
     lines = executed = branches = taken = 0
+    observed = [0] * len(ranges)
     missed = []
     current = None
     for row in gcov_text.splitlines():
@@ -181,10 +182,17 @@ def misses(gcov_text, ranges):
         if not inside or count == "-":
             continue
         lines += 1
+        for index, (first, last) in enumerate(ranges):
+            if first <= number <= last:
+                observed[index] += 1
         if count.startswith(("#####", "=====")):
             missed.append(f"  {number}: {text.strip()}  (never ran)")
         else:
             executed += 1
+    if lines == 0:
+        raise RuntimeError("coverage report has no executable lines in gated functions")
+    if any(count == 0 for count in observed):
+        raise RuntimeError("coverage report has no executable lines for a gated function range")
     return lines, executed, branches, taken, missed
 
 

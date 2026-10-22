@@ -6,6 +6,10 @@
   ],
   "contracts": [
     {
+      "fixture": "tests/test_runtime_coverage.py",
+      "asserts": "The actual full runtime entry rejects empty/unrelated reports and partial gated-function measurement before it can claim coverage; recording compiler/gcov controls are synthetic admission evidence"
+    },
+    {
       "fixture": "tests/filter/run.sh",
       "asserts": "Filtered and bypass boundaries, coordinate continuity, immediate motion/reversal/stop, independence/reset and normal-filter negative control"
     },

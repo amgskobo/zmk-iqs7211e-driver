@@ -8,6 +8,7 @@
   "unsupported_core_status": "NOT APPLICABLE",
   "commands": [
     "bash tests/run-host-docker.sh",
+    "python3 -m unittest discover -s tests -p test_runtime_coverage.py -v; actual full-entry empty/unrelated/missing-range controls, included in canonical quick/full host entry",
     "python3 tests/integration/run.py --workspace /absolute/resolved/workspace --core stock-zmk|dya --output /absolute/new/output",
     "python3 -m unittest discover -s tests/integration -p test_*.py -v; fresh output paths before west",
     "python3 tests/kernel/run.py --workspace RESOLVED --core stock-zmk|dya --output FRESH; ordinary/click own-queue PM rejection and external recovery, three identical-binary repeats",

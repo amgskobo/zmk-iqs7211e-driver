@@ -42,6 +42,14 @@ reset/cancellation and failure/recovery scenarios where applicable. Checks
 assert ordered outputs and explicit time inputs. Coverage is a full-mode gate,
 not a reason to replace assertions or a hardware completeness claim.
 
+The canonical host entry also runs `test_runtime_coverage.py` in both modes.
+Recording compiler/gcov tools drive the actual full runtime entry and require
+rejection of empty reports, unrelated metadata and a report measuring only one
+gated function. Every gated range must contain executable lines; `lines 0/0`
+cannot pass. Existing missed-line/branch rejection and real full-mode behavioral
+measurement remain unchanged. The recording tools test admission, not driver
+behavior or physical timing.
+
 ## Separate integration and physical contracts
 
 The owner now has an independent API/DT firmware fixture below
