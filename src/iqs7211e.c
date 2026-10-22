@@ -64,6 +64,11 @@ K_THREAD_STACK_DEFINE(iqs7211e_work_queue_stack,
 static struct k_work_q iqs7211e_work_queue;
 static bool iqs7211e_work_queue_started;
 
+#if defined(CONFIG_PM_DEVICE) && defined(CONFIG_INPUT_MODE_THREAD)
+/* The Zephyr revision shared by both supported cores exports this handle from
+ * subsys/input/input.c. No public input-thread accessor exists there. */
+extern const k_tid_t input;
+#endif
 
 static enum iqs7211e_gestures_event iqs7211e_get_touchpad_event(const struct iqs7211e_data *data);
 static bool iqs7211e_init_state(struct iqs7211e_data *data);
@@ -2004,10 +2009,15 @@ static int iqs7211e_pm_action(const struct device *dev, enum pm_device_action ac
     struct iqs7211e_data *data = dev->data;
     int ret;
 
-    /* Synchronous cancellation cannot wait for the work item executing this
-     * callback. Leave state untouched so the caller can defer PM off-queue. */
+    /* Cancellation cannot wait for this queue's own item. The input consumer
+     * also cannot wait for our K_FOREVER release producer: a full input queue
+     * needs that consumer to drain it. Reject before changing any state. */
     if (action == PM_DEVICE_ACTION_SUSPEND &&
-        k_current_get() == k_work_queue_thread_get(&iqs7211e_work_queue))
+        (k_current_get() == k_work_queue_thread_get(&iqs7211e_work_queue)
+#ifdef CONFIG_INPUT_MODE_THREAD
+         || k_current_get() == input
+#endif
+        ))
     {
         return -EWOULDBLOCK;
     }

@@ -72,7 +72,7 @@ def main():
     binary = out/'zmk.exe'
     (out/'binary.sha256').write_text(hashlib.sha256(binary.read_bytes()).hexdigest())
     rows = []
-    for case in ('work','click'):
+    for case in ('work','click','input'):
         for repeat in (1,2,3):
             env = dict(os.environ,IQS_KERNEL_CASE=case)
             try:

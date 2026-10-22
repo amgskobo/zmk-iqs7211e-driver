@@ -42,6 +42,14 @@ reset/cancellation and failure/recovery scenarios where applicable. Checks
 assert ordered outputs and explicit time inputs. Coverage is a full-mode gate,
 not a reason to replace assertions or a hardware completeness claim.
 
+The canonical host entry also runs `test_runtime_coverage.py` in both modes.
+Recording compiler/gcov tools drive the actual full runtime entry and require
+rejection of empty reports, unrelated metadata and a report measuring only one
+gated function. Every gated range must contain executable lines; `lines 0/0`
+cannot pass. Existing missed-line/branch rejection and real full-mode behavioral
+measurement remain unchanged. The recording tools test admission, not driver
+behavior or physical timing.
+
 ## Separate integration and physical contracts
 
 The owner now has an independent API/DT firmware fixture below
@@ -94,9 +102,11 @@ IQS_TEST_CASE=failed-mask ZMK_TEST_MODE=quick python3 tests/runtime/run.py
 
 The actual kernel check compiles the complete driver unchanged once, uses the
 real private work queue and GPIO emulator, and exercises suspend from the
-currently executing ordinary and delayed click work items. Each must return
+currently executing ordinary and delayed click work items, plus the real input
+consumer with its message queue full and a button release owed. Each must return
 `-EWOULDBLOCK` with state untouched; a subsequent external suspend/resume must
-work. Both cases run three times with the same binary. A premature exit 0 or
+work, delivering the retained release exactly once. All three cases run three
+times with the same binary. A premature exit 0 or
 timeout is a failure unless the named completion marker and exit 0 both match.
 
 ```bash
@@ -115,6 +125,13 @@ core/Zephyr selection as the interface fixture, do not fetch dependencies, and
 save commands, config, binary hash, source identities and raw ordered repeats.
 This is a work-cancellation check, not I2C, RDY electrical timing or sensor
 reseed validation. Those still require actual board evidence.
+
+Threaded-input suspend uses the `input` thread handle exported by the pinned
+Zephyr input subsystem in both supported cores; those revisions have no public
+accessor for it. Both complete-source native links and supported-core firmware
+builds check this dependency. A caller on that thread must defer suspend to
+another thread after `-EWOULDBLOCK`, just like a caller on the private work queue.
+Synchronous input mode does not reference the threaded backend's handle.
 
 Both API/kernel entries reject relative, existing, linked and dangling result
 paths before invoking west. The guard is exercised by

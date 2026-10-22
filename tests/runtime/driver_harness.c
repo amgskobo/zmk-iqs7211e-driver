@@ -7,6 +7,7 @@
  * of the sensor's memory map, built with CONFIG_PM_DEVICE. The driver's own header supplies its structures.
  */
 #define CONFIG_PM_DEVICE 1
+#define CONFIG_INPUT_MODE_THREAD 1
 #define CONFIG_IQS7211E_WORKQUEUE_PRIORITY 5
 
 #include <stdlib.h>
@@ -32,6 +33,8 @@ enum pm_device_action { PM_DEVICE_ACTION_SUSPEND, PM_DEVICE_ACTION_RESUME,
 static char iqs7211e_work_queue_stack[1024];
 static struct k_work_q iqs7211e_work_queue;
 static bool iqs7211e_work_queue_started;
+static struct k_thread input_thread;
+const k_tid_t input = &input_thread;
 static struct device sensor;
 static struct iqs7211e_data idle_data;
 static struct device idle_sensor = {.name = "idle", .data = &idle_data};
@@ -1152,6 +1155,11 @@ static void test_pm_rejects_own_queue_before_any_side_effect(void) {
     current_thread = &iqs7211e_work_queue.thread;
     assert(iqs7211e_pm_action(&sensor, PM_DEVICE_ACTION_SUSPEND) == -EWOULDBLOCK &&
            "PM must not synchronously cancel its currently executing queue");
+    assert(!data.suspended && data.last_touched_state && data.click_edges == 3);
+    assert(irq_mode == old_irq_mode && input_count == 0);
+    current_thread = input;
+    assert(iqs7211e_pm_action(&sensor, PM_DEVICE_ACTION_SUSPEND) == -EWOULDBLOCK &&
+           "PM must not wait for a release while blocking its input consumer");
     assert(!data.suspended && data.last_touched_state && data.click_edges == 3);
     assert(irq_mode == old_irq_mode && input_count == 0);
     current_thread = NULL;
