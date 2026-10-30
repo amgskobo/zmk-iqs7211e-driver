@@ -46,7 +46,7 @@ DTS が `<(-1)>` を表す32ビットの cell だけを、8ビットの格納前
 これは、デジタイザーからマウスへの変換器など、絶対データを期待する ZMK 入力プロセッサと組み合わせる場合に便利です。
 絶対座標は 0 から 1024 の範囲で報告されます (チップの解像度定義による、最大値を含む)。
 
-直接の相対座標モードでは `INPUT_BTN_TOUCH` を報告しません。ZMK はこのコードを mouse button 0 として扱うため、報告するとパッドへ触れている間の移動がすべて左ドラッグになるためです。絶対座標モードでは、絶対座標processorがcontactの開始と終了を判定できるよう `INPUT_BTN_TOUCH` を報告します。純粋なabsolute-to-relative converterは元のボタンイベントを維持します。ZMKのmouse出力へ届く前にアプリケーションのボタン方針を適用してください。たとえば、同じ独立した `zmk-input-suppress` instanceを全listener経路の末尾へ配置し、各経路のmaskに `SUPPRESS_TOUCH` を含めます。tap gestureによる通常の `INPUT_BTN_*` clickは両モードで維持され、その経路のボタンmaskに従います。
+直接の相対座標モードでは `INPUT_BTN_TOUCH` を報告しません。ZMK はこのコードを mouse button 0 として扱うため、報告するとパッドへ触れている間の移動がすべて左ドラッグになるためです。絶対座標モードでは、絶対座標processorがcontactの開始と終了を判定できるよう `INPUT_BTN_TOUCH` を報告します。純粋なabsolute-to-relative converterは元のボタンイベントを維持します。ZMKのmouse出力へ届く前にアプリケーションのボタン方針を適用してください。たとえば、同じ独立した [`zmk-input-suppress`](https://github.com/amgskobo/zmk-input-suppress) instanceを全listener経路の末尾へ配置し、各経路のmaskに `SUPPRESS_TOUCH` を含めます。tap gestureによる通常の `INPUT_BTN_*` clickは両モードで維持され、その経路のボタンmaskに従います。
 
 絶対モードと相対モードは、設定可能なラバーバンドdeadbandと3サンプル中央値から成る同じ座標フィルターを使います。一時的な無効座標は直前の出力を保持し、フィルター履歴も進めません。平滑化はチップ内MAVとDynamic IIRに任せ、ホスト側でIIRを重ねません。すべてのフィルター状態は接触開始ごとに初期化されます。
 
@@ -71,9 +71,9 @@ DTS が `<(-1)>` を表す32ビットの cell だけを、8ビットの格納前
 | 1 | 接続先を特定する | `reg`, `irq-gpios` | 基板のI2CアドレスとRDY割り込みGPIO。両方必須で、通常は回路図の値をそのまま使います。 |
 | 2 | タップ操作を決める | `single-tap`, `double-tap`, `triple-tap` | 各値は `-1` で無効です。例として `0`～`2` は `BTN_0`～`BTN_2` に対応し、指定できる上限は127です。不要なジェスチャーは明示的に無効のままにします。 |
 | 3 | 座標の向きを決める | `rotate-cw` | 実装方向に合わせて `<0>`、`<1>`、`<2>`、`<3>` を選びます。Input Processorのedge指定は回転後の座標に対して行います。 |
-| 4 | 座標方式を決める | `report-abs` | 直接相対ポインタなら省略します。absolute-to-relative、padstick、matrixなど絶対座標を受けるInput Processorを使うなら `report-abs;` を設定します。その場合、下流で `INPUT_BTN_TOUCH` を消費または抑制します。 |
+| 4 | 座標方式を決める | `report-abs` | 直接相対ポインタなら省略します。absolute-to-relative、[padstick](https://github.com/amgskobo/zmk-input-padstick)、matrixなど絶対座標を受けるInput Processorを使うなら `report-abs;` を設定します。その場合、下流で `INPUT_BTN_TOUCH` を消費または抑制します。 |
 | 5 | ノイズ境界を決める | `jitter-deadband` | まず既定値 `<8>` で測定します。静止時の揺れが残るなら増やし、微小移動が失われるなら減らします。`0` はdeadbandだけを無効にし、中央値フィルターは残ります。 |
-| 6 | edge routingを決める | 下流のInput Processor | side sliderには`zmk-input-temp-layer-touch`を使い、absolute-to-relative変換より前の全routeへ配置します。 |
+| 6 | edge routingを決める | 下流のInput Processor | side sliderには[`zmk-input-temp-layer-touch`](https://github.com/amgskobo/zmk-input-temp-layer-touch)を使い、absolute-to-relative変換より前の全routeへ配置します。 |
 | 7 | 接触の生存確認を決める | `touch-verify-interval-ms` | 通常は既定値 `<120>` を維持します。これは読み取り失敗または指なしを検出した時に古い接触をreleaseします。チップの60秒fallbackだけを使うと決めた場合だけ `<0>` にします。 |
 
 設計後は、通常ポインタ、設定した全edge、各tap、layer解除直後の遅延tap、静止接触、suspend/resumeを実機で確認します。
@@ -214,7 +214,6 @@ suspend 開始時に割り込みの停止が失敗した場合も、割り込み
 CONFIG_IQS7211E_WORKQUEUE_STACK_SIZE=1536
 CONFIG_IQS7211E_WORKQUEUE_PRIORITY=-1
 ```
-
 
 ### 3.4 ファームウェアのビルド
 
@@ -381,7 +380,6 @@ push/PR の CI は全ホストシナリオを ASan/UBSan 版で実行します�
 
 - [IQS7211E製品ページ](https://www.azoteq.com/product/iqs7211e/): Datasheet、AZD123
 - [Application Notes一覧](https://www.azoteq.com/design/application-notes/): AZD128
-
 
 ## テストと確認範囲
 
