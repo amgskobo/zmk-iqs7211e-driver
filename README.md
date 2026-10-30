@@ -54,7 +54,7 @@ to mouse button 0, which would otherwise turn every contact into a left-button
 drag. Absolute mode does emit the contact edges because absolute-coordinate
 processors use them to delimit a contact. The pure absolute-to-relative converter
 preserves those source edges. Before they reach ZMK's mouse output, apply the application's
-button policy; for example, put the same independent `zmk-input-suppress`
+button policy; for example, put the same independent [`zmk-input-suppress`](https://github.com/amgskobo/zmk-input-suppress)
 instance at the end of every listener route and include `SUPPRESS_TOUCH` in
 each route's mask. Tap gestures remain ordinary `INPUT_BTN_*` click reports in
 both modes, governed by that route's button mask.
@@ -97,9 +97,9 @@ Choose configuration in this order instead of selecting isolated values first.
 | 1 | Wire connection | `reg`, `irq-gpios` | Required. Use the board I2C address and RDY interrupt GPIO from the schematic. |
 | 2 | Tap gestures | `single-tap`, `double-tap`, `triple-tap` | `-1` disables a gesture; indices `0` through `127` select `BTN_0` + index (for example, `0` through `2` select `BTN_0` through `BTN_2`). Leave unneeded gestures disabled. |
 | 3 | Physical orientation | `rotate-cw` | Select `<0>` through `<3>` for the installed orientation. Input-processor edges use the coordinates after this rotation. |
-| 4 | Coordinate mode | `report-abs` | Omit for a direct relative pointer. Set `report-abs;` for processors that consume absolute coordinates, such as absolute-to-relative, padstick, or matrix. That downstream path must consume or suppress `INPUT_BTN_TOUCH`. |
+| 4 | Coordinate mode | `report-abs` | Omit for a direct relative pointer. Set `report-abs;` for processors that consume absolute coordinates, such as absolute-to-relative, [padstick](https://github.com/amgskobo/zmk-input-padstick), or matrix. That downstream path must consume or suppress `INPUT_BTN_TOUCH`. |
 | 5 | Noise boundary | `jitter-deadband` | Measure from the default `<8>`. Raise it for stationary jitter, lower it if fine movement is lost. `0` disables only the deadband; the median filter remains. |
-| 6 | Edge routing | downstream input processors | Use `zmk-input-temp-layer-touch` for side sliders. Put it before absolute-to-relative conversion on every route. |
+| 6 | Edge routing | downstream input processors | Use [`zmk-input-temp-layer-touch`](https://github.com/amgskobo/zmk-input-temp-layer-touch) for side sliders. Put it before absolute-to-relative conversion on every route. |
 | 7 | Contact liveness | `touch-verify-interval-ms` | Normally retain `<120>`. It independently releases stale contacts after a read failure or no-finger report. Set `<0>` only when deliberately relying on the sensor's 60-second fallback. |
 
 After choosing the design, exercise normal pointer movement, every configured
@@ -499,7 +499,6 @@ end cannot be removed with it.
 
 - [IQS7211E product page](https://www.azoteq.com/product/iqs7211e/): datasheet, AZD123
 - [Application notes index](https://www.azoteq.com/design/application-notes/): AZD128
-
 
 ## Tests and limits
 
