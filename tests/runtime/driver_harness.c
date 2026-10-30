@@ -14,6 +14,7 @@
 #include "iqs7211e_init.h"
 #include "iqs7211e.h"
 #include "iqs7211e_runtime.h"
+#include "iqs7211e_timeout.h"
 
 #define IQS7211E_CLICK_EDGE_MS 20
 #define IQS7211E_RDY_RECHECK_MS 1

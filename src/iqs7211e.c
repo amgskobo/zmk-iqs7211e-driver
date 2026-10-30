@@ -16,6 +16,7 @@
 #include "iqs7211e_init.h"
 #include "iqs7211e.h"
 #include "iqs7211e_runtime.h"
+#include "iqs7211e_timeout.h"
 
 LOG_MODULE_REGISTER(zmk_iqs7211e_driver_iqs7211e, CONFIG_ZMK_IQS7211E_DRIVER_LOG_LEVEL);
 
@@ -315,7 +316,6 @@ static bool iqs7211e_init_state(struct iqs7211e_data *data)
     default:
         break;
     }
-    // LOG_DBG("Transition to state: %d", data->init_state);
     return false;
 }
 
@@ -616,19 +616,6 @@ static int iqs7211e_queue_value_updates(struct iqs7211e_data *data)
     data->finger_1_touch_strength = (buf[9] << 8) | buf[8];
     data->finger_1_area = (buf[11] << 8) | buf[10];
 
-    /*
-     * Finger 2 is physically not supported on this 22x22mm module.
-     * Disabling to optimize I2C traffic.
-     *
-    ret = iqs7211e_read_bytes(&config->i2c, IQS7211E_MM_FINGER_2_X, buf, 4);
-    if (ret < 0)
-    {
-        LOG_ERR("Failed to read FINGER_2 data");
-        return ret;
-    }
-    data->finger_2_x = (buf[1] << 8) | buf[0];
-    data->finger_2_y = (buf[3] << 8) | buf[2];
-    */
 
     return 0;
 }
@@ -1808,7 +1795,8 @@ static int iqs7211e_report_data(struct iqs7211e_data *data)
     {
         iqs7211e_reschedule_work(
             &data->touch_verify_work,
-            K_MSEC(config->touch_verify_interval_ms));
+            K_TICKS(iqs7211e_timeout_ticks(config->touch_verify_interval_ms,
+                                          CONFIG_SYS_CLOCK_TICKS_PER_SEC)));
     }
     else
     {
@@ -1976,7 +1964,8 @@ static void iqs7211e_restore_after_failed_suspend(struct iqs7211e_data *data)
     {
         iqs7211e_reschedule_work(
             &data->touch_verify_work,
-            K_MSEC(config->touch_verify_interval_ms));
+            K_TICKS(iqs7211e_timeout_ticks(config->touch_verify_interval_ms,
+                                          CONFIG_SYS_CLOCK_TICKS_PER_SEC)));
     }
 
     if (iqs7211e_enable_interrupt_and_recheck(data) < 0)
@@ -2189,15 +2178,19 @@ BUILD_ASSERT(RESOLUTION_X == ((X_RESOLUTION_1 << 8) | X_RESOLUTION_0),
 BUILD_ASSERT(RESOLUTION_Y == ((Y_RESOLUTION_1 << 8) | Y_RESOLUTION_0),
              "RESOLUTION_Y must match Y_RESOLUTION_0/1 in iqs7211e_init.h");
 
+/* Explicit <(-1)> is a 32-bit DTS cell, unlike a signed binding default.
+ * Accept only that exact disabled encoding, then normalize it before the
+ * int8_t initializer; other overflowing cells must not alias a button. */
+#define IQS7211E_TAP_VALUE_VALID(value)                                                        \
+    (((value) >= -1 && (value) <= INT8_MAX) || (value) == UINT32_MAX)
+#define IQS7211E_TAP_VALUE(value) ((value) == UINT32_MAX ? -1 : (value))
+
 #define IQS7211E_VALIDATE(inst)                                                                 \
-    BUILD_ASSERT(DT_INST_PROP_OR(inst, single_tap, -1) >= -1 &&                                 \
-                     DT_INST_PROP_OR(inst, single_tap, -1) <= INT8_MAX,                          \
+    BUILD_ASSERT(IQS7211E_TAP_VALUE_VALID(DT_INST_PROP_OR(inst, single_tap, -1)),               \
                  "single-tap must fit in int8_t and be at least -1");                           \
-    BUILD_ASSERT(DT_INST_PROP_OR(inst, double_tap, -1) >= -1 &&                                 \
-                     DT_INST_PROP_OR(inst, double_tap, -1) <= INT8_MAX,                          \
+    BUILD_ASSERT(IQS7211E_TAP_VALUE_VALID(DT_INST_PROP_OR(inst, double_tap, -1)),               \
                  "double-tap must fit in int8_t and be at least -1");                           \
-    BUILD_ASSERT(DT_INST_PROP_OR(inst, triple_tap, -1) >= -1 &&                                 \
-                     DT_INST_PROP_OR(inst, triple_tap, -1) <= INT8_MAX,                          \
+    BUILD_ASSERT(IQS7211E_TAP_VALUE_VALID(DT_INST_PROP_OR(inst, triple_tap, -1)),               \
                  "triple-tap must fit in int8_t and be at least -1");                           \
     BUILD_ASSERT(DT_INST_PROP_OR(inst, jitter_deadband, 8) >= 0 &&                              \
                      DT_INST_PROP_OR(inst, jitter_deadband, 8) <= RESOLUTION_X,                 \
@@ -2213,9 +2206,9 @@ BUILD_ASSERT(RESOLUTION_Y == ((Y_RESOLUTION_1 << 8) | Y_RESOLUTION_0),
     static const struct iqs7211e_config iqs7211e_config_##inst = {                              \
         .i2c = I2C_DT_SPEC_INST_GET(inst),                                                      \
         .irq_gpio = GPIO_DT_SPEC_INST_GET(inst, irq_gpios),                                     \
-        .single_tap = DT_INST_PROP_OR(inst, single_tap, -1),                                    \
-        .double_tap = DT_INST_PROP_OR(inst, double_tap, -1),                                    \
-        .triple_tap = DT_INST_PROP_OR(inst, triple_tap, -1),                                    \
+        .single_tap = IQS7211E_TAP_VALUE(DT_INST_PROP_OR(inst, single_tap, -1)),                 \
+        .double_tap = IQS7211E_TAP_VALUE(DT_INST_PROP_OR(inst, double_tap, -1)),                 \
+        .triple_tap = IQS7211E_TAP_VALUE(DT_INST_PROP_OR(inst, triple_tap, -1)),                 \
         .jitter_deadband = DT_INST_PROP_OR(inst, jitter_deadband, 8),                            \
         .rotate_cw = DT_INST_PROP_OR(inst, rotate_cw, 0),                                       \
         /* report-abs is optional: absence selects direct relative reports. */                   \

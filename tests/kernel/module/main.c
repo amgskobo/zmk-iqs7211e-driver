@@ -45,9 +45,23 @@ static void request_suspend(struct k_work *work) {
     k_sem_give(&completed);
 }
 
+static void verify_timeout_conversion(void) {
+    static const uint32_t rates[] = {1, 100, 1000, 32768, 65536, 65537, UINT32_MAX};
+    for (unsigned h = 0; h < ARRAY_SIZE(rates); ++h) {
+        const uint32_t hz = rates[h];
+        for (uint32_t ms = 0; ms <= UINT16_MAX; ++ms) {
+            const k_ticks_t expected = (k_ticks_t)(IS_ENABLED(CONFIG_TIMEOUT_64BIT) ?
+                z_tmcvt_64(ms, 1000U, hz, true, true, false) :
+                z_tmcvt_32(ms, 1000U, hz, true, true, false));
+            __ASSERT_NO_MSG(iqs7211e_timeout_ticks((uint16_t)ms, hz) == expected);
+        }
+    }
+}
+
 static void tests(void *a, void *b, void *c) {
     ARG_UNUSED(a); ARG_UNUSED(b); ARG_UNUSED(c);
     (void)iqs7211e_init;
+    verify_timeout_conversion();
     const char *which = getenv("IQS_KERNEL_CASE");
     __ASSERT_NO_MSG(which != NULL);
     state.dev = &sensor;

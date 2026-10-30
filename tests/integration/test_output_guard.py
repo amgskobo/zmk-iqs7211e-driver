@@ -11,7 +11,7 @@ import unittest
 class FreshEvidence(unittest.TestCase):
     def test_api_and_kernel_reject_existing_and_linked_results_before_west(self):
         root = Path(__file__).resolve().parents[2]
-        for entry in ('tests/integration/run.py', 'tests/kernel/run.py'):
+        for entry in ('tests/integration/run.py', 'tests/kernel/run.py', 'tests/integration/tap_ranges.py'):
             for kind in ('existing','linked','dangling','relative'):
                 with tempfile.TemporaryDirectory() as folder:
                     base = Path(folder)

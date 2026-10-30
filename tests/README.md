@@ -145,3 +145,69 @@ a rejected suspend. A failed first suspend mask preserves pending report state
 because the work has not yet been drained. Initial GPIO setup errors still fail
 device initialization. The host regression injects both normal re-arm and
 rejected-suspend restore failures and verifies successful retry.
+
+## Native-width verification timeouts
+
+The two variable verification-work reservations share the private
+`src/iqs7211e_timeout.h` conversion. The full uint16 range of 0..65535 ms, zero
+verification-disable behavior, ceiling rounding, private work-queue ownership,
+IRQ/retry/I2C/PM and ordered report/release policy remain unchanged. Clock rates
+through 65536 Hz use a checked uint32 numerator. Higher rates split seconds and
+the fractional product while retaining the configured kernel tick width; no
+software 64-bit divider or new clock restriction is introduced.
+
+`test_timeout_width.py`, selected by the canonical host entry, executes the same
+`timeout/test_timeout.c` at 14 clock rates against an independent wide ceiling
+oracle for every uint16 wait. Full retains optimized, ASan/UBSan, coverage and
+m32 execution, with both 32/64-bit tick forms. Actual header line/branch coverage
+must be 100% with nonzero measured counts. The actual object must have no wide
+arithmetic helpers. Four identified floor/product/fraction/seconds faults each
+must compile and fail qualified C assertions three times per tick form. The
+compiled wide-divider control stays numerically correct but must fail the
+object-width guard. All previous filtered/bypass and fault fixtures remain.
+
+The complete-source kernel PM fixture additionally compares the actual production
+helper against pinned Zephyr conversion macros at 7 positive clock rates over
+all 65536 waits. It keeps the same work/click/input cases and PM completion markers,
+three repeats each on both supported cores. The fixture still models GPIO and
+queue boundaries only; electrical sensor/I2C/RDY, physical latency and power
+remain unmeasured. Retired collectors are not restored.
+
+```bash
+python3 -m unittest discover -s tests -p test_timeout_width.py -v
+```
+
+## Raw tap-cell compile boundary
+
+Run `python3 tests/integration/tap_ranges.py --workspace RESOLVED_WORKSPACE
+--core stock-zmk|dya --output FRESH_ABSOLUTE_OUTPUT` on each supported core.
+The entry resolves and checks the same pinned clean core/Zephyr projects as the
+API fixture, stages unchanged owner source, configures the actual xiao_ble DTS,
+and compiles only the actual IQS driver object. It retains commands, raw errors,
+config/DTS and source hashes. Existing output paths stop before west is invoked.
+Default selection retains all17 cases: explicit disabled cells for all3 taps;
+default,0 and127 boundary instances; and each tap at-2,128,255,256 and65535.
+`--case explicit-disabled` selects the valid sentinel regression alone.
+Negative cases require exactly the named tap diagnostic; unrelated configuration
+or compiler failures are failures. These are compile/API checks, not sensor,
+input transport, physical gesture or power acceptance.
+
+### Tap-result output isolation
+
+The tap-range entry normalizes the output path before creating it. Evidence must
+stay outside the owner, selected workspace and every west project root, including
+projects not yet cloned. Parent symlinks cannot redirect output into an input.
+A normalized external path is used for all writes, so discarded `..` components
+do not create intermediate directories inside a source. Existing evidence remains
+protected before dependency discovery. External sibling paths and safe parent
+aliases remain supported.
+
+`test_tap_output_roots.py`, included in canonical quick/full discovery, drives the
+actual entry with synthetic source trees and controlled dependency/compiler
+responses. It checks both core selections, direct and aliased owner/workspace/
+manifest/core/Zephyr/HAL/uncloned roots, root equality, source byte/directory
+preservation, normal external outputs, normalized existing targets and symlink
+loops. Source/workspace rejection precedes west; selected external project
+rejection follows discovery but precedes Git checks, staging and compilation.
+These admission fixtures establish path isolation, not firmware acceptance.
+The separate real supported-core tap/API/kernel entries retain their contracts.

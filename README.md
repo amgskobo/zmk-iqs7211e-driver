@@ -24,13 +24,24 @@ keymap layers or pointer regions:
 |----------|------|---------|-------------|
 | `reg` | byte | 0x56 | I2C address of the device (required) |
 | `irq-gpios` | phandle-array | | Interrupt pin (required)|
-| `single-tap` | int | -1 | Button triggered by single-tap (-1=disabled, 0=BTN_0, 1=BTN_1, 2=BTN_2, ...) |
-| `double-tap` | int | -1 | Button triggered by double-tap (-1=disabled, 0=BTN_0, 1=BTN_1, 2=BTN_2, ...) |
-| `triple-tap` | int | -1 | Button triggered by triple-tap (-1=disabled, 0=BTN_0, 1=BTN_1, 2=BTN_2, ...) |
+| `single-tap` | int | -1 | Button index 0..127 (`BTN_0` + index); -1 disables this gesture. |
+| `double-tap` | int | -1 | Button index 0..127 (`BTN_0` + index); -1 disables this gesture. |
+| `triple-tap` | int | -1 | Button index 0..127 (`BTN_0` + index); -1 disables this gesture. |
 | `rotate-cw` | uint | 0 | **CW Rotation angle to match physical placement** (0=0°, 1=90°, 2=180°, 3=270°). Coordinates are normalized before they reach downstream input processors. |
 | `report-abs` | boolean | false | If true, report absolute coordinates instead of relative ones. |
 | `jitter-deadband` | int | 8 | Per-axis coordinate distance held by the rubber-band jitter gate. X and Y are gated independently, not by Euclidean distance. 0 disables the gate and keeps the three-sample median filter. Treat the default as a conservative starting point and override it after measuring the panel. Valid range: 0-1024. |
 | `touch-verify-interval-ms` | int | 120 | In both report modes, independently run a full report read at this interval while touch remains active. This provides common stale-contact recovery and is not layer-gated. Set to 0 to use the sensor's 60-second fallback instead. |
+
+### Tap button range and explicit disable
+
+Each `single-tap`, `double-tap` and `triple-tap` accepts -1 through 127.
+Use `single-tap = <(-1)>;` (and the corresponding property for other taps) to
+explicitly disable a mapping inherited from another overlay. An omitted
+property keeps the binding default -1. The exact disabled DTS cell is
+normalized before int8 storage; other negative/overflowing cells are rejected.
+This keeps all valid button mappings and deferred click ordering unchanged.
+See the [raw DTS compile boundary tests](tests/README.md#raw-tap-cell-compile-boundary)
+for both supported cores.
 
 ### 2.1 Absolute Pointer Report Mode
 
@@ -41,10 +52,12 @@ The absolute coordinates are reported in the range of 0 to 1024 (as defined by t
 Direct relative reporting does not emit `INPUT_BTN_TOUCH`: ZMK maps that code
 to mouse button 0, which would otherwise turn every contact into a left-button
 drag. Absolute mode does emit the contact edges because absolute-coordinate
-processors use them to delimit a contact. Such a processor must consume or
-suppress `INPUT_BTN_TOUCH` before it reaches ZMK's mouse output; for example,
-use `suppress-btn-touch` with an absolute-to-relative processor. Tap gestures
-remain ordinary `INPUT_BTN_*` click reports in both modes.
+processors use them to delimit a contact. The pure absolute-to-relative converter
+preserves those source edges. Before they reach ZMK's mouse output, apply the application's
+button policy; for example, put the same independent `zmk-input-suppress`
+instance at the end of every listener route and include `SUPPRESS_TOUCH` in
+each route's mask. Tap gestures remain ordinary `INPUT_BTN_*` click reports in
+both modes, governed by that route's button mask.
 
 Both absolute and relative reporting use the same stateful coordinate filter: a configurable
 rubber-band deadband followed by a three-sample median. The driver relies on the sensor's
@@ -82,7 +95,7 @@ Choose configuration in this order instead of selecting isolated values first.
 | Step | Decide | Properties | Selection rule and constraint |
 |---|---|---|---|
 | 1 | Wire connection | `reg`, `irq-gpios` | Required. Use the board I2C address and RDY interrupt GPIO from the schematic. |
-| 2 | Tap gestures | `single-tap`, `double-tap`, `triple-tap` | `-1` disables a gesture; `0` through `2` select `BTN_0` through `BTN_2`. Leave unneeded gestures disabled. |
+| 2 | Tap gestures | `single-tap`, `double-tap`, `triple-tap` | `-1` disables a gesture; indices `0` through `127` select `BTN_0` + index (for example, `0` through `2` select `BTN_0` through `BTN_2`). Leave unneeded gestures disabled. |
 | 3 | Physical orientation | `rotate-cw` | Select `<0>` through `<3>` for the installed orientation. Input-processor edges use the coordinates after this rotation. |
 | 4 | Coordinate mode | `report-abs` | Omit for a direct relative pointer. Set `report-abs;` for processors that consume absolute coordinates, such as absolute-to-relative, padstick, or matrix. That downstream path must consume or suppress `INPUT_BTN_TOUCH`. |
 | 5 | Noise boundary | `jitter-deadband` | Measure from the default `<8>`. Raise it for stationary jitter, lower it if fine movement is lost. `0` disables only the deadband; the median filter remains. |
@@ -488,15 +501,24 @@ end cannot be removed with it.
 - [Application notes index](https://www.azoteq.com/design/application-notes/): AZD128
 
 
-## Current test entry points (2026-10-05)
+## Tests and limits
 
-Timing/cadence aggregation, periodic FLOW counters/logs and optional stack
-high-water collection were retired on2026-10-16. There is no measurement
-configuration switch. Sensor filters, report delivery, PM/recovery and the
-boot IRQ-seen latch remain. Ordinary state/error logs remain available.
-Retired assertions/source and their status are mapped in [tests/retired-measurements.md](tests/retired-measurements.md).
+Run the host suite in Docker:
 
-See [the module-owned test guide](tests/README.md). The default host command
-executes every behavior scenario once under ASan/UBSan. Set `ZMK_TEST_MODE=full`
-for all retained coverage/ABI variants. Legacy simulation has been removed
-from the active suite; its source/snapshots remain externally archived.
+```sh
+bash tests/run-host-docker.sh
+ZMK_TEST_MODE=full bash tests/run-host-docker.sh
+```
+
+The default runs every behavior scenario under ASan/UBSan; full adds all
+retained coverage and ABI variants. The [module-owned test guide](tests/README.md)
+documents API, raw DTS tap-range and kernel/PM checks on unchanged stock ZMK
+and DYA, fresh output directories, dependency preparation and negative controls.
+These checks do not establish physical sensor, I2C, USB/BLE, timing or power
+acceptance.
+
+Timing/cadence aggregation, periodic FLOW counters and optional stack
+high-water collection are retired. There is no measurement configuration switch.
+Sensor filters, report delivery, PM/recovery, ordinary state/error logs and the
+boot IRQ-seen latch remain. Retired assertions and archived simulation
+sources/snapshots are mapped in the [retirement ledger](tests/retired-measurements.md).

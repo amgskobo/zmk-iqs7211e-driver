@@ -24,6 +24,14 @@
     {
       "fixture": "tests/integration/test_output_guard.py",
       "asserts": "API/kernel result paths reject relative/existing/symlink/dangling paths before west, preserve sentinel and avoid creating dangling targets"
+    },
+    {
+      "fixture": "tests/integration/test_tap_output_roots.py",
+      "asserts": "Actual tap entry rejects output in resolved owner/workspace/all selected project roots before writes; direct paths, parent aliases, aliased project listings, uncreated project roots and equality retain every input byte/directory. Safe external siblings/aliases and normalized external paths remain supported; normalized existing targets and symlink loops stop before discovery. Synthetic dependency/compiler responses prove admission only; the unchanged pre-repair entry mutates source fixtures and fails these assertions."
+    },
+    {
+      "fixture": "tests/timeout/test_timeout.c; tests/test_timeout_width.py",
+      "asserts": "Actual private timeout header, every wait in 0..65535 ms at 14 clock rates against an independent wide ceiling oracle; 32/64-bit tick forms and m32 object/numeric execution. Full retains optimized/sanitized/coverage/m32 variants with nonzero 100% header coverage. Four semantic faults each require 3 qualified assertion failures per tick form; the compiled wide control is numerically correct but rejected by the width guard."
     }
   ],
   "limits": "Stub I2C/GPIO/PM does not establish electrical timing, real IRQ delivery or shared-bus fairness.",
@@ -36,8 +44,19 @@
   "kernel": {
     "entry": "tests/kernel/run.py --workspace RESOLVED --core stock-zmk|dya --output FRESH",
     "fixture": "tests/kernel/module/main.c",
-    "asserts": "Actual ordinary/delayed work cannot cancel itself synchronously; own-queue suspend returns EWOULDBLOCK without state changes, external suspend/resume remains usable; two cases x three identical-binary runs",
+    "asserts": "Actual ordinary/delayed work and full-queue input consumer reject synchronous PM with EWOULDBLOCK before side effects; subsequent external suspend/resume releases the owed button exactly once. Three cases x three identical-binary runs per core. Actual Zephyr conversion comparison at 7 positive rates over all 65536 uint16 waits; existing PM markers and behavior retained.",
     "negative_control": "--negative-control invalid-priority requires named compile rejection; no runtime execution is reported as a passing control",
     "limits": "Actual kernel cancellation with GPIO emulation; no physical bus, sensor or downstream transport evidence"
+  },
+  "timeout_conversion": "Two variable touch verification reservations use 32-bit divisions with exact ceiling over the full uint16 range, retaining the tick ABI, zero-disable behavior and all I2C/GPIO/PM/report policy. No retired instrumentation.",
+  "raw_tap_cells": {
+    "command": "python3 tests/integration/tap_ranges.py --workspace RESOLVED --core stock-zmk|dya --output FRESH_ABSOLUTE_OUTPUT",
+    "fixture": "tests/integration/tap-ranges/cases.json",
+    "asserts": "Actual raw32-bit DTS tap cells: explicit <(-1)> means disabled for all3 tap properties; default -1 and valid0/127 stay accepted. Each property rejects -2,128,255,256,65535 with exactly its named compile assertion. Source object compilation uses pinned clean stock/DYA; before repair explicit disabled fails the single-tap assertion on both. No runtime gesture/click/lifecycle logic changed.",
+    "supported_cores": [
+      "stock-zmk",
+      "dya"
+    ],
+    "physical": "NOT RUN"
   }
 }
