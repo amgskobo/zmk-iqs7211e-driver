@@ -1,0 +1,13 @@
+/* SPDX-License-Identifier: MIT */
+&sensor { single-tap = <0>; double-tap = <127>; triple-tap = <0>; };
+&i2c0 {
+    tap_limits: trackpad@55 {
+        compatible = "azoteq,iqs7211e";
+        reg = <0x55>; irq-gpios = <&gpio0 6 GPIO_ACTIVE_HIGH>;
+        single-tap = <127>; double-tap = <0>; triple-tap = <127>;
+    };
+    tap_defaults: trackpad@54 {
+        compatible = "azoteq,iqs7211e";
+        reg = <0x54>; irq-gpios = <&gpio0 6 GPIO_ACTIVE_HIGH>;
+    };
+};

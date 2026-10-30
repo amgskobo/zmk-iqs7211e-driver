@@ -32,6 +32,8 @@
 #define K_FOREVER ((k_timeout_t){-1})
 #define K_NO_WAIT ((k_timeout_t){0})
 #define K_MSEC(ms) ((k_timeout_t){(ms)})
+#define K_TICKS(value) ((k_timeout_t){(value)})
+#define CONFIG_SYS_CLOCK_TICKS_PER_SEC 1000
 #define K_THREAD_STACK_SIZEOF(stack) sizeof(stack)
 #define GPIO_INPUT 0x10
 #define GPIO_INT_DISABLE 0

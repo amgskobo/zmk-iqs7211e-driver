@@ -15,6 +15,29 @@ static const struct iqs7211e_config config = {
 static const struct device sensor = {.name = "native-pm", .config = &config, .data = &state};
 K_SEM_DEFINE(completed, 0, 1);
 static int pm_result;
+K_SEM_DEFINE(released, 0, 1);
+static unsigned release_count;
+
+static void input_pm_request(struct input_event *event, void *user_data) {
+    ARG_UNUSED(user_data);
+    if (event->type == INPUT_EV_KEY && event->code == INPUT_BTN_0 && !event->value) {
+        release_count++;
+        k_sem_give(&released);
+        return;
+    }
+    if (event->type != INPUT_EV_MSC || event->value != 1) {
+        return;
+    }
+    /* The input consumer cannot make room while waiting for PM's private-queue
+     * release. Fill the real queue so that cycle is deterministic. */
+    for (unsigned i = 0; i < CONFIG_INPUT_QUEUE_MAX_MSGS; i++) {
+        __ASSERT_NO_MSG(input_report(&sensor, INPUT_EV_MSC, INPUT_MSC_SCAN,
+                                     2, true, K_NO_WAIT) == 0);
+    }
+    pm_result = iqs7211e_pm_action(&sensor, PM_DEVICE_ACTION_SUSPEND);
+    k_sem_give(&completed);
+}
+INPUT_CALLBACK_DEFINE(&sensor, input_pm_request, NULL);
 
 static void request_suspend(struct k_work *work) {
     ARG_UNUSED(work);
@@ -22,9 +45,23 @@ static void request_suspend(struct k_work *work) {
     k_sem_give(&completed);
 }
 
+static void verify_timeout_conversion(void) {
+    static const uint32_t rates[] = {1, 100, 1000, 32768, 65536, 65537, UINT32_MAX};
+    for (unsigned h = 0; h < ARRAY_SIZE(rates); ++h) {
+        const uint32_t hz = rates[h];
+        for (uint32_t ms = 0; ms <= UINT16_MAX; ++ms) {
+            const k_ticks_t expected = (k_ticks_t)(IS_ENABLED(CONFIG_TIMEOUT_64BIT) ?
+                z_tmcvt_64(ms, 1000U, hz, true, true, false) :
+                z_tmcvt_32(ms, 1000U, hz, true, true, false));
+            __ASSERT_NO_MSG(iqs7211e_timeout_ticks((uint16_t)ms, hz) == expected);
+        }
+    }
+}
+
 static void tests(void *a, void *b, void *c) {
     ARG_UNUSED(a); ARG_UNUSED(b); ARG_UNUSED(c);
     (void)iqs7211e_init;
+    verify_timeout_conversion();
     const char *which = getenv("IQS_KERNEL_CASE");
     __ASSERT_NO_MSG(which != NULL);
     state.dev = &sensor;
@@ -39,17 +76,33 @@ static void tests(void *a, void *b, void *c) {
     __ASSERT_NO_MSG(gpio_pin_configure_dt(&config.irq_gpio, GPIO_INPUT) == 0);
     if (strcmp(which, "work") == 0) {
         __ASSERT_NO_MSG(iqs7211e_submit_work(&state.work) >= 0);
-    } else {
+    } else if (strcmp(which, "click") == 0) {
         __ASSERT_NO_MSG(strcmp(which, "click") == 0);
         __ASSERT_NO_MSG(iqs7211e_reschedule_work(&state.click_work, K_NO_WAIT) >= 0);
+    } else {
+        __ASSERT_NO_MSG(strcmp(which, "input") == 0);
+        state.click_edges = 1;
+        state.click_button = INPUT_BTN_0;
+        __ASSERT_NO_MSG(input_report(&sensor, INPUT_EV_MSC, INPUT_MSC_SCAN,
+                                     1, true, K_FOREVER) == 0);
     }
     __ASSERT(k_sem_take(&completed, K_SECONDS(1)) == 0,
-             "PM same-queue call failed to return");
-    __ASSERT(pm_result == -EWOULDBLOCK, "PM own queue must reject synchronous cancellation");
+             "PM queue-context call failed to return");
+    __ASSERT(pm_result == -EWOULDBLOCK, "PM producer/consumer queue must reject synchronous waits");
     __ASSERT_NO_MSG(atomic_get(&state.suspended) == 0);
+    if (strcmp(which, "input") == 0) {
+        __ASSERT(state.click_edges == 1 && release_count == 0,
+                 "Rejected input-thread PM must preserve its owed release");
+    }
     /* A rejected self-call must leave the queue usable for normal PM. */
     __ASSERT_NO_MSG(iqs7211e_pm_action(&sensor, PM_DEVICE_ACTION_SUSPEND) == 0);
     __ASSERT_NO_MSG(atomic_get(&state.suspended) == 1);
+    if (strcmp(which, "input") == 0) {
+        __ASSERT(k_sem_take(&released, K_SECONDS(1)) == 0,
+                 "External PM must deliver the preserved release");
+        __ASSERT(state.click_edges == 0 && release_count == 1,
+                 "External PM must complete the release exactly once");
+    }
     __ASSERT_NO_MSG(iqs7211e_pm_action(&sensor, PM_DEVICE_ACTION_RESUME) == 0);
     __ASSERT_NO_MSG(atomic_get(&state.suspended) == 0);
     printk("IQS kernel PM PASS case=%s time=%lld\n", which, k_uptime_get());

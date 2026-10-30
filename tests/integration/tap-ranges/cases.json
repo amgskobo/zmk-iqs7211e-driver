@@ -1,0 +1,68 @@
+[
+  {
+    "name": "explicit-disabled"
+  },
+  {
+    "name": "abi-boundaries"
+  },
+  {
+    "name": "single-tap-negative",
+    "error": "static assertion failed: \"single-tap must fit in int8_t and be at least -1\""
+  },
+  {
+    "name": "single-tap-over",
+    "error": "static assertion failed: \"single-tap must fit in int8_t and be at least -1\""
+  },
+  {
+    "name": "single-tap-alias-disabled",
+    "error": "static assertion failed: \"single-tap must fit in int8_t and be at least -1\""
+  },
+  {
+    "name": "single-tap-alias-zero",
+    "error": "static assertion failed: \"single-tap must fit in int8_t and be at least -1\""
+  },
+  {
+    "name": "single-tap-alias-wide",
+    "error": "static assertion failed: \"single-tap must fit in int8_t and be at least -1\""
+  },
+  {
+    "name": "double-tap-negative",
+    "error": "static assertion failed: \"double-tap must fit in int8_t and be at least -1\""
+  },
+  {
+    "name": "double-tap-over",
+    "error": "static assertion failed: \"double-tap must fit in int8_t and be at least -1\""
+  },
+  {
+    "name": "double-tap-alias-disabled",
+    "error": "static assertion failed: \"double-tap must fit in int8_t and be at least -1\""
+  },
+  {
+    "name": "double-tap-alias-zero",
+    "error": "static assertion failed: \"double-tap must fit in int8_t and be at least -1\""
+  },
+  {
+    "name": "double-tap-alias-wide",
+    "error": "static assertion failed: \"double-tap must fit in int8_t and be at least -1\""
+  },
+  {
+    "name": "triple-tap-negative",
+    "error": "static assertion failed: \"triple-tap must fit in int8_t and be at least -1\""
+  },
+  {
+    "name": "triple-tap-over",
+    "error": "static assertion failed: \"triple-tap must fit in int8_t and be at least -1\""
+  },
+  {
+    "name": "triple-tap-alias-disabled",
+    "error": "static assertion failed: \"triple-tap must fit in int8_t and be at least -1\""
+  },
+  {
+    "name": "triple-tap-alias-zero",
+    "error": "static assertion failed: \"triple-tap must fit in int8_t and be at least -1\""
+  },
+  {
+    "name": "triple-tap-alias-wide",
+    "error": "static assertion failed: \"triple-tap must fit in int8_t and be at least -1\""
+  }
+]

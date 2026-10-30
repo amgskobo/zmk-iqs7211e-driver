@@ -15,7 +15,6 @@
 - シングルタップ / ダブルタップ / トリプルタップ
 - 時計回りの回転補正 (`rotate-cw`)
 - edge sliderは下流の[`zmk-input-temp-layer-touch`](https://github.com/amgskobo/zmk-input-temp-layer-touch)で追加できます。左右padの独立処理と遅延tap抑制に対応します。
-- 「最奥」クオリティの堅牢性: 境界値の数学的厳密化 (Off-by-one Fix) および PM (電源管理) 時の安全な通信停止を実装。
 
 ## 2. デバイスツリーのプロパティ
 
@@ -23,13 +22,23 @@
 |----------|------|---------|-------------|
 | `reg` | byte | 0x56 | デバイスの I2C アドレス (必須) |
 | `irq-gpios` | phandle-array | | 割り込みピン (必須) |
-| `single-tap` | int | -1 | シングルタップでトリガーされるボタン (-1=無効, 0=BTN_0, 1=BTN_1, ...) |
-| `double-tap` | int | -1 | ダブルタップでトリガーされるボタン (-1=無効, 0=BTN_0, 1=BTN_1, ...) |
-| `triple-tap` | int | -1 | トリプルタップでトリガーされるボタン (-1=無効, 0=BTN_0, 1=BTN_1, ...) |
+| `single-tap` | int | -1 | ボタン番号0〜127（`BTN_0` + 番号）。-1でこのジェスチャーを無効化。 |
+| `double-tap` | int | -1 | ボタン番号0〜127（`BTN_0` + 番号）。-1でこのジェスチャーを無効化。 |
+| `triple-tap` | int | -1 | ボタン番号0〜127（`BTN_0` + 番号）。-1でこのジェスチャーを無効化。 |
 | `rotate-cw` | uint | 0 | **物理配置に合わせた時計回りの回転角度** (0=0°, 1=90°, 2=180°, 3=270°)。driver内部で座標変換を行います。 |
 | `report-abs` | boolean | false | true の場合、相対座標ではなく絶対座標を報告します。 |
 | `jitter-deadband` | int | 8 | ラバーバンド式ジッタゲートが保持する軸ごとの座標差。X/Yへ独立に適用し、ユークリッド距離では判定しません。0ではゲートだけを無効にし、3サンプル中央値フィルターは維持します。既定値は保守的な開始値として扱い、panelの実測後に上書きします。有効範囲は0～1024です。 |
 | `touch-verify-interval-ms` | int | 120 | 絶対・相対の両モードで、タッチ継続中に通常レポートをこの周期で1回読みます。古い接触の復旧を両モードで共通化し、レイヤー制限は受けません。0ではホスト側verifyを無効化し、チップ側の60秒fallbackを使います。 |
+
+### tap の明示的な無効化と範囲
+
+`single-tap`、`double-tap`、`triple-tap` の範囲は -1〜127 です。
+別の overlay から継承した割り当てを無効にする場合は、`single-tap = <(-1)>;` のように
+明示します。double/triple も同じ形式です。省略時の既定値は従来通り -1 です。
+DTS が `<(-1)>` を表す32ビットの cell だけを、8ビットの格納前に -1 へ正規化します。
+他の負数や上限を超える値は、対象 property を示すビルドエラーで拒否します。
+有効なボタン番号と、クリックの press/release の順序は変わりません。
+実際の DTS を通す[範囲検査](tests/README.md#raw-tap-cell-compile-boundary)で、両方の対応 core を確認します。
 
 ### 2.1 絶対座標レポートモード
 
@@ -37,7 +46,7 @@
 これは、デジタイザーからマウスへの変換器など、絶対データを期待する ZMK 入力プロセッサと組み合わせる場合に便利です。
 絶対座標は 0 から 1024 の範囲で報告されます (チップの解像度定義による、最大値を含む)。
 
-直接の相対座標モードでは `INPUT_BTN_TOUCH` を報告しません。ZMK はこのコードを mouse button 0 として扱うため、報告するとパッドへ触れている間の移動がすべて左ドラッグになるためです。絶対座標モードでは、絶対座標processorがcontactの開始と終了を判定できるよう `INPUT_BTN_TOUCH` を報告します。そのprocessorは、ZMKのmouse出力へ届く前にこのイベントを消費または抑制する必要があります。たとえばabsolute-to-relative processorでは `suppress-btn-touch` を使用します。tap gestureによる通常の `INPUT_BTN_*` clickは両モードで維持されます。
+直接の相対座標モードでは `INPUT_BTN_TOUCH` を報告しません。ZMK はこのコードを mouse button 0 として扱うため、報告するとパッドへ触れている間の移動がすべて左ドラッグになるためです。絶対座標モードでは、絶対座標processorがcontactの開始と終了を判定できるよう `INPUT_BTN_TOUCH` を報告します。純粋なabsolute-to-relative converterは元のボタンイベントを維持します。ZMKのmouse出力へ届く前にアプリケーションのボタン方針を適用してください。たとえば、同じ独立した `zmk-input-suppress` instanceを全listener経路の末尾へ配置し、各経路のmaskに `SUPPRESS_TOUCH` を含めます。tap gestureによる通常の `INPUT_BTN_*` clickは両モードで維持され、その経路のボタンmaskに従います。
 
 絶対モードと相対モードは、設定可能なラバーバンドdeadbandと3サンプル中央値から成る同じ座標フィルターを使います。一時的な無効座標は直前の出力を保持し、フィルター履歴も進めません。平滑化はチップ内MAVとDynamic IIRに任せ、ホスト側でIIRを重ねません。すべてのフィルター状態は接触開始ごとに初期化されます。
 
@@ -60,7 +69,7 @@
 | 手順 | 決めること | プロパティ | 選択基準・制約 |
 |---|---|---|---|
 | 1 | 接続先を特定する | `reg`, `irq-gpios` | 基板のI2CアドレスとRDY割り込みGPIO。両方必須で、通常は回路図の値をそのまま使います。 |
-| 2 | タップ操作を決める | `single-tap`, `double-tap`, `triple-tap` | 各値は `-1` で無効、`0`～`2` で `BTN_0`～`BTN_2`。不要なジェスチャーは明示的に無効のままにします。 |
+| 2 | タップ操作を決める | `single-tap`, `double-tap`, `triple-tap` | 各値は `-1` で無効です。例として `0`～`2` は `BTN_0`～`BTN_2` に対応し、指定できる上限は127です。不要なジェスチャーは明示的に無効のままにします。 |
 | 3 | 座標の向きを決める | `rotate-cw` | 実装方向に合わせて `<0>`、`<1>`、`<2>`、`<3>` を選びます。Input Processorのedge指定は回転後の座標に対して行います。 |
 | 4 | 座標方式を決める | `report-abs` | 直接相対ポインタなら省略します。absolute-to-relative、padstick、matrixなど絶対座標を受けるInput Processorを使うなら `report-abs;` を設定します。その場合、下流で `INPUT_BTN_TOUCH` を消費または抑制します。 |
 | 5 | ノイズ境界を決める | `jitter-deadband` | まず既定値 `<8>` で測定します。静止時の揺れが残るなら増やし、微小移動が失われるなら減らします。`0` はdeadbandだけを無効にし、中央値フィルターは残ります。 |
@@ -374,9 +383,23 @@ push/PR の CI は全ホストシナリオを ASan/UBSan 版で実行します�
 - [Application Notes一覧](https://www.azoteq.com/design/application-notes/): AZD128
 
 
-## Current test entry points (2026-10-05)
+## テストと確認範囲
 
-See [the module-owned test guide](tests/README.md). The default host command
-executes every behavior scenario once under ASan/UBSan. Set `ZMK_TEST_MODE=full`
-for all retained coverage/ABI variants. Legacy simulation has been removed
-from the active suite; its source/snapshots remain externally archived.
+ホストテストはDockerで実行します。
+
+```sh
+bash tests/run-host-docker.sh
+ZMK_TEST_MODE=full bash tests/run-host-docker.sh
+```
+
+通常実行は全動作シナリオをASan/UBSanで確認し、fullでは維持しているカバレッジと
+ABI構成を追加します。[モジュールのテストガイド](tests/README.md)に、変更していない
+stock ZMKとDYAのAPI・DTSのtap範囲・kernel/PM検査、新しい出力先、依存の準備、
+失敗対照を記載しています。センサー、I2C、USB/BLE、実時間の挙動や消費電力は
+別途実機で確認してください。
+
+時刻・周期の集計、定期的なFLOWカウンター、stack high-waterの収集は廃止済みで、
+計測用の設定スイッチもありません。センサーフィルター、レポート出力、PMと復旧、
+通常の状態・エラーログ、起動時のIRQ検出状態は維持します。廃止した検査と、
+外部に保存した旧シミュレーションのソース・snapshotの対応は
+[退役対応表](tests/retired-measurements.md)を参照してください。

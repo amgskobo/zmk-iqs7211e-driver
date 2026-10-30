@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include "iqs7211e_runtime.h"
 #include "iqs7211e_filter.h"
+#include "iqs7211e_timeout.h"
 
 typedef int atomic_t;
 typedef int atomic_val_t;
@@ -60,6 +61,8 @@ struct iqs7211e_data {
 #define IQS7211E_CLICK_EDGE_MS 20
 #define K_FOREVER 0
 #define K_MSEC(ms) (ms)
+#define K_TICKS(value) (value)
+#define CONFIG_SYS_CLOCK_TICKS_PER_SEC 1000
 #define LOG_ERR(...) ((void)0)
 #define LOG_WRN(...) ((void)0)
 #define LOG_DBG(...) ((void)0)

@@ -20,19 +20,25 @@ properties:
     default: -1
     description: |
       Set the button triggered by a single-tap.
-      -1 = disabled, 0 = BTN_0, 1 = BTN_1, 2 = BTN_2
+      -1 = disabled, 0 = BTN_0, 1 = BTN_1, 2 = BTN_2. Range: -1 through 127.
+      An explicit <(-1)> override is accepted as the disabled 32-bit DTS cell;
+      other out-of-range raw cells fail before conversion to internal storage.
   double-tap:
     type: int
     default: -1
     description: |
       Set the button triggered by double-tap.
-      -1 = disabled, 0 = BTN_0, 1 = BTN_1, 2 = BTN_2
+      -1 = disabled, 0 = BTN_0, 1 = BTN_1, 2 = BTN_2. Range: -1 through 127.
+      An explicit <(-1)> override is accepted as the disabled 32-bit DTS cell;
+      other out-of-range raw cells fail before conversion to internal storage.
   triple-tap:
     type: int
     default: -1
     description: |
       Set the button triggered by triple-tap.
-      -1 = disabled, 0 = BTN_0, 1 = BTN_1, 2 = BTN_2
+      -1 = disabled, 0 = BTN_0, 1 = BTN_1, 2 = BTN_2. Range: -1 through 127.
+      An explicit <(-1)> override is accepted as the disabled 32-bit DTS cell;
+      other out-of-range raw cells fail before conversion to internal storage.
   rotate-cw:
     type: int
     default: 0

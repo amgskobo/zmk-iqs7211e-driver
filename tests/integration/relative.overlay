@@ -1,1 +1,6 @@
-&sensor { /delete-property/ report-abs; };
+&sensor {
+    /delete-property/ report-abs;
+    single-tap = <(-1)>;
+    double-tap = <(-1)>;
+    triple-tap = <(-1)>;
+};
