@@ -177,6 +177,121 @@ remain unmeasured. Retired collectors are not restored.
 python3 -m unittest discover -s tests -p test_timeout_width.py -v
 ```
 
+## Kernel event fixture
+
+`tests/kernel/events/` runs the complete driver on the real kernel and asserts what
+comes out of it. Devicetree instances are initialized by the kernel. Transactions
+go through the real I2C emulator controller, RDY edges are raised from timer ISRs
+on the emulated GPIO, and work items, the input queue and thread, PM device actions
+and the ZMK input listener up to the HID report are the real ones. Only the sensor
+is a model (`sensor_model.h`): its registers and bits are literals from the memory
+map, independent of the driver's macros.
+
+```bash
+python3 tests/kernel/events/run.py --workspace /resolved/dya --core dya \
+  --output /fresh/events-dya
+python3 tests/kernel/events/run.py --workspace /resolved/stock --core stock-zmk \
+  --output /fresh/events-stock
+python3 tests/kernel/events/run.py --workspace /resolved/dya --core dya \
+  --output /fresh/events-mutations --negative-control mutations
+```
+
+[kernel/events/cases.json](kernel/events/cases.json) names every case and what it
+asserts: boot and setup recovery, contacts, rotation, touch verification, taps, RDY
+and bus failures, a stopped input consumer, runtime resets, PM, two sensors on one
+queue, and HID reports. The entry requires the fixture to list exactly those cases.
+Each case runs three times on one binary and must print its completion marker, exit
+0 and repeat one identical printed trace, including raw ticks in input, HID and bus
+lines. The fixture builds once, at the 32768 Hz tick rate of the production boards;
+the native_sim default of 1000 Hz adds no production case and is not built.
+Assertions check exact report contents and order, selected bus transactions, and
+bounds on observed delays. They do not assert exact requested delays. Time is
+virtual; observed scheduling comes from the kernel rather than host load.
+`--case NAME` selects a case for diagnosis.
+
+Expected traces are derived from the driver's contract, including the filter's
+exact output for a given input; none is captured from a run. The negative control
+applies each fault in [kernel/events/mutations.json](kernel/events/mutations.json)
+to a disposable copy, at the same tick rate. The unchanged baseline runs concurrently
+with `--jobs` workers (default 4) and must pass every named case with three
+identical-binary repeats for the control to succeed. Each worker builds a pristine
+copy once. A worker then applies one fault at a time,
+rebuilds incrementally, runs the fault's named cases once, and restores the file
+before the next. Mutation matches must have the exact declared count, restricted
+to the named function body where specified. A fault names one case, or a list
+when one edit is the designated check of several cases; it must build and be
+rejected by the `IQSFAIL` assertion of every named case. A fault that does not
+build, that survives, or that never ran fails the control. Every worker must finish
+successfully too: a pristine-build failure or an exception (including its traceback)
+is a terminal failure even if other workers handle every fault. The top-level
+`results.json` records `baseline_passed`, `workers` and `mutations`. Each `worker-N/`
+retains its pristine executable's SHA-256, `.config`, `zephyr.dts`, `CMakeCache.txt`
+and build log/exit. Each successful incremental build records its executable's
+SHA-256 in the fault row; a hash equal to that worker's pristine hash is
+`STALE-BINARY`, fails the control and skips the fault's cases. Every result other
+than `REJECTED` retains the available executable in the fault directory, including
+the old executable if a rebuild fails; failed incremental build logs are retained.
+Controls are reported apart from product results. Give the container about twice
+`--jobs` CPUs.
+Each case belongs to the catalogue only if no other case already establishes what
+it checks, and each fault only if no other fault makes the same edit or the same
+class of edit to the same statement.
+The runner admission controls are exercised separately in the prepared container:
+`python3 -m unittest discover -s tests/kernel/events -p test_runner.py -v`.
+
+The sensor model follows IQS7211E datasheet v1.4 §§9.3.1, 10.2, 11.6–11.9 and
+Table A.7: STOP ends a session, Show Reset suppresses event mode until acknowledged,
+and gesture/trackpad changes require their respective event-source enable bits.
+Re-ATI completion is visible for one cycle. Unserviced windows expire at register
+0x32's I2C timeout, discarding the window's gesture flags and pending report.
+Current-sample finger count, coordinates, strength and area remain available to
+later forced or verification reads: processing continues normally (§11.6).
+Table A and §11.6 give no power-up timeout default; the model assumes 100 ms until
+settings program it. Suspend takes effect at the end of the command session.
+
+`input_backpressure` advances twelve alternating 500/501-X contact frames at a
+sensor-owned 110-ms cadence, independent of reads. With one callback held and a
+16-entry queue, eight packets produce 17 accepted reports; the ninth packet blocks
+on X. Three later windows, carrying gestures as well as contact data, expire at
+100 ms while the driver is blocked. After resuming, all 19 reports from the nine
+serviced packets arrive in order. A fresh
+lift and triple tap follow; the three lost sensor packets are never replayed.
+`input_backpressure_verify_contact` keeps a stationary contact on a sensor with
+120-ms verification and disabled tap mappings. Eight packets fill the 17 input
+slots; an unmapped single-tap event
+supplies the ninth packet and blocks its X report. Another unmapped tap window
+expires while verification becomes queued. On resume, the ninth packet finishes,
+and the due verification reads the still-held contact: exactly one down edge and
+ten XY pairs (21 reports), with no release. A normal lift adds three reports.
+The `timeout-invents-lift` mutation restores register zeroing in a disposable copy
+and must fail this exact-stream check; it is a control, separate from product runs.
+
+Unchanged contact frames in the filter cases use real touch verification reads;
+explicit spurious RDY and stuck/held windows are fault injections. Finish checks
+balanced buttons/contacts, no verification work, and no bus traffic for present
+sensors during the 300-ms settle. Absent sensors may make only three boot attempts.
+
+The entry retains case-list stdout/stderr/exit and checks both the owner identity
+and resolved dependency selection before and after execution.
+
+This fixture does not establish physical behaviour. The model has no capacitive
+front end or gesture classifier, so whether a real part flags a triple tap remains
+unmeasured. Forced communication completes immediately: clock stretching outside
+a window (§11.9.2), the reseed after wake (§10.2), and electrical timing remain
+unmodelled. It has no electrical bus, and native_sim time is not elapsed time on a
+board. The GPIO emulator delivers edges only; there is no bus contention. Input
+report failures cannot be injected through the real input queue, so those paths stay
+with the host harnesses. Routing through a keyboard's input processors belongs to
+the consuming keyboard. The pointer, mapped-button and relative sensors have real
+listeners with no processors. `tap_button_map` also asserts twelve HID reports for
+the single/double/triple taps on buttons 1/2/3, and `contact_rel` asserts five HID
+reports with X 0, 0, 46, 46, 0, zero Y and no buttons. Each synced input event sends
+one HID report, including zero motion. These checks reuse the existing cases.
+`hid_abs_contact_is_left_button` pins the left-button edge a production route must
+drop. Other cases retain their input expectations; the extra listeners only add HID
+traces where their sensors emit input. The largest stream with the added listeners
+is `two_sensors_independent` (15 HID reports), within `hid_seen`'s 128 entries.
+
 ## Raw tap-cell compile boundary
 
 Run `python3 tests/integration/tap_ranges.py --workspace RESOLVED_WORKSPACE

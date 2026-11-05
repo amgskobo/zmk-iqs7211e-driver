@@ -601,6 +601,139 @@ static void test_click_worker_failures(const struct device *dev) {
     iqs7211e_click_work_handler(&d.click_work.work);
 }
 
+/*
+ * A triple tap's six edges go out as three press/release pairs on one button,
+ * in order and each synced. Every edge but the last requests the next one a
+ * click-edge delay later, and a failed press or release is retried alone.
+ */
+static void test_triple_click_stream(const struct device *dev) {
+    struct iqs7211e_data d = {.dev = dev, .click_button = INPUT_BTN_0 + 2, .click_edges = 6};
+
+    report_count = 0;
+    for (int left = 5; left >= 0; left--) {
+        const int before = scheduled;
+        last_scheduled = NULL;
+        last_delay = -1;
+        iqs7211e_click_work_handler(&d.click_work.work);
+        assert(d.click_edges == left);
+        if (left > 0) {
+            assert(scheduled == before + 1 && last_scheduled == &d.click_work &&
+                   last_delay == IQS7211E_CLICK_EDGE_MS);
+        } else {
+            assert(scheduled == before && last_scheduled == NULL);
+        }
+    }
+    EXPECT({'K', INPUT_BTN_0 + 2, 1, true}, {'K', INPUT_BTN_0 + 2, 0, true},
+           {'K', INPUT_BTN_0 + 2, 1, true}, {'K', INPUT_BTN_0 + 2, 0, true},
+           {'K', INPUT_BTN_0 + 2, 1, true}, {'K', INPUT_BTN_0 + 2, 0, true});
+
+    /* The second press fails once: that edge alone goes out again. */
+    d.click_edges = 6;
+    iqs7211e_click_work_handler(&d.click_work.work);
+    iqs7211e_click_work_handler(&d.click_work.work);
+    int before = scheduled;
+    fail_key = 1;
+    last_scheduled = NULL;
+    last_delay = -1;
+    iqs7211e_click_work_handler(&d.click_work.work);
+    assert(d.click_edges == 4 && last_delay == IQS7211E_CLICK_EDGE_MS);
+    assert(scheduled == before + 1 && last_scheduled == &d.click_work);
+    for (int left = 3; left >= 0; left--) {
+        iqs7211e_click_work_handler(&d.click_work.work);
+        assert(d.click_edges == left);
+    }
+    EXPECT({'K', INPUT_BTN_0 + 2, 1, true}, {'K', INPUT_BTN_0 + 2, 0, true},
+           {'K', INPUT_BTN_0 + 2, 1, true}, /* refused, and owed again */
+           {'K', INPUT_BTN_0 + 2, 1, true}, {'K', INPUT_BTN_0 + 2, 0, true},
+           {'K', INPUT_BTN_0 + 2, 1, true}, {'K', INPUT_BTN_0 + 2, 0, true});
+
+    /* The second release fails once: only that release is retried. */
+    d.click_edges = 6;
+    iqs7211e_click_work_handler(&d.click_work.work);
+    iqs7211e_click_work_handler(&d.click_work.work);
+    iqs7211e_click_work_handler(&d.click_work.work);
+    before = scheduled;
+    fail_key = 1;
+    last_scheduled = NULL;
+    last_delay = -1;
+    iqs7211e_click_work_handler(&d.click_work.work);
+    assert(d.click_edges == 3 && last_delay == IQS7211E_CLICK_EDGE_MS);
+    assert(scheduled == before + 1 && last_scheduled == &d.click_work);
+    for (int left = 2; left >= 0; left--) {
+        iqs7211e_click_work_handler(&d.click_work.work);
+        assert(d.click_edges == left);
+    }
+    EXPECT({'K', INPUT_BTN_0 + 2, 1, true}, {'K', INPUT_BTN_0 + 2, 0, true},
+           {'K', INPUT_BTN_0 + 2, 1, true},
+           {'K', INPUT_BTN_0 + 2, 0, true}, /* refused, and owed again */
+           {'K', INPUT_BTN_0 + 2, 0, true}, {'K', INPUT_BTN_0 + 2, 1, true},
+           {'K', INPUT_BTN_0 + 2, 0, true});
+    assert(fail_key == 0 && fail_schedule == 0 && report_count == 0);
+}
+
+static void test_triple_click_reschedule_failures(const struct device *dev) {
+    struct iqs7211e_data d = {.dev = dev, .click_button = INPUT_BTN_0 + 2, .click_edges = 6};
+
+    /* A press leaves five edges; a failed reschedule releases it at once. */
+    int before = scheduled;
+    fail_schedule = 1;
+    iqs7211e_click_work_handler(&d.click_work.work);
+    assert(d.click_edges == 0 && scheduled == before + 1);
+    EXPECT({'K', INPUT_BTN_0 + 2, 1, true}, {'K', INPUT_BTN_0 + 2, 0, true});
+    iqs7211e_click_work_handler(&d.click_work.work);
+    EXPECT_NONE();
+    assert(d.click_edges == 0 && scheduled == before + 1);
+
+    /* A release leaves four edges; a failed reschedule abandons them. */
+    d.click_edges = 6;
+    iqs7211e_click_work_handler(&d.click_work.work);
+    assert(d.click_edges == 5);
+    before = scheduled;
+    fail_schedule = 1;
+    iqs7211e_click_work_handler(&d.click_work.work);
+    assert(d.click_edges == 0 && scheduled == before + 1);
+    EXPECT({'K', INPUT_BTN_0 + 2, 1, true}, {'K', INPUT_BTN_0 + 2, 0, true});
+    iqs7211e_click_work_handler(&d.click_work.work);
+    EXPECT_NONE();
+    assert(d.click_edges == 0 && scheduled == before + 1);
+
+    /* A refused second press owes no release if its retry cannot be scheduled. */
+    d.click_edges = 6;
+    iqs7211e_click_work_handler(&d.click_work.work);
+    iqs7211e_click_work_handler(&d.click_work.work);
+    assert(d.click_edges == 4);
+    before = scheduled;
+    fail_key = 1;
+    fail_schedule = 1;
+    iqs7211e_click_work_handler(&d.click_work.work);
+    assert(d.click_edges == 0 && scheduled == before + 1);
+    EXPECT({'K', INPUT_BTN_0 + 2, 1, true}, {'K', INPUT_BTN_0 + 2, 0, true},
+           {'K', INPUT_BTN_0 + 2, 1, true}); /* refused */
+    iqs7211e_click_work_handler(&d.click_work.work);
+    EXPECT_NONE();
+    assert(d.click_edges == 0 && scheduled == before + 1);
+
+    /* A refused second release is attempted again when its retry cannot be scheduled. */
+    d.click_edges = 6;
+    iqs7211e_click_work_handler(&d.click_work.work);
+    iqs7211e_click_work_handler(&d.click_work.work);
+    iqs7211e_click_work_handler(&d.click_work.work);
+    assert(d.click_edges == 3);
+    before = scheduled;
+    fail_key = 1;
+    fail_schedule = 1;
+    iqs7211e_click_work_handler(&d.click_work.work);
+    assert(d.click_edges == 0 && scheduled == before + 1);
+    EXPECT({'K', INPUT_BTN_0 + 2, 1, true}, {'K', INPUT_BTN_0 + 2, 0, true},
+           {'K', INPUT_BTN_0 + 2, 1, true},
+           {'K', INPUT_BTN_0 + 2, 0, true}, /* refused */
+           {'K', INPUT_BTN_0 + 2, 0, true});
+    iqs7211e_click_work_handler(&d.click_work.work);
+    EXPECT_NONE();
+    assert(d.click_edges == 0 && scheduled == before + 1);
+    assert(fail_key == 0 && fail_schedule == 0 && report_count == 0);
+}
+
 #if defined(CONFIG_IQS7211E_FILTER_BYPASS)
 static void test_unfiltered_report_streams(struct iqs7211e_config *config,
                                           const struct device *dev) {
@@ -729,6 +862,8 @@ int main(void) {
     test_boot_kick(&dev);
     test_report_modes(&config, &dev);
     test_click_worker_failures(&dev);
+    test_triple_click_stream(&dev);
+    test_triple_click_reschedule_failures(&dev);
 #if defined(CONFIG_IQS7211E_FILTER_BYPASS)
     test_unfiltered_report_streams(&config, &dev);
 #else

@@ -15,11 +15,11 @@
     },
     {
       "fixture": "tests/runtime/driver_harness.c",
-      "asserts": "Initialization, RDY/retry, I2C failures, recovery and PM state; initial failed-mask edge recovery, retained Event Mode after PM resume, interrupted boot recovery, own-queue rejection before side effects; runtime IRQ re-arm and rejected-suspend IRQ restore failures retain recovery; first failed mask preserves in-flight report ownership"
+      "asserts": "Initialization, RDY/retry, I2C failures, recovery and PM state; initial failed-mask edge recovery, retained Event Mode after PM resume, interrupted boot recovery, own-queue rejection before side effects; runtime IRQ re-arm and rejected-suspend IRQ restore failures retain recovery; first failed mask preserves in-flight report ownership; a triple tap queues six click edges with the first edge requested with no delay"
     },
     {
       "fixture": "tests/runtime/reports_harness.c",
-      "asserts": "Contact and button report lifecycle in filtered and bypass builds; retained filtered traces and immediate unfiltered output/invalid/rotation/independence traces"
+      "asserts": "Contact and button report lifecycle in filtered and bypass builds; retained filtered traces and immediate unfiltered output/invalid/rotation/independence traces; six queued click edges play as three ordered synced press/release pairs with requested per-edge delay, single-edge retry for a press or release, and abandonment on failed reschedule"
     },
     {
       "fixture": "tests/integration/test_output_guard.py",
@@ -40,6 +40,14 @@
     "full": "ZMK_TEST_MODE=full: same scenarios plus optimized, coverage and existing 32-bit variants",
     "integration": "owner native/DTS/API guards when interfaces or kernel contracts change; not a prerequisite for pure host behavior",
     "transport": "actual ordered USB/BLE/split/power/reset evidence; archived simulation is not a passing substitute"
+  },
+  "kernel_events": {
+    "entry": "tests/kernel/events/run.py --workspace RESOLVED --core stock-zmk|dya --output FRESH",
+    "fixture": "tests/kernel/events/main.c; tests/kernel/events/sensor_model.h; tests/kernel/events/cases.json",
+    "asserts": "Exact report contents and order, selected bus transactions, bounds on observed delays, and identical printed traces including raw ticks per case in tests/kernel/events/cases.json. Real devicetree instances, I2C emulator, ISR-raised RDY, work and input queues, PM and ZMK listener. Fixture/case-list equality and successful retained list subprocess required. Product runs: both cores, one build at the production 32768 Hz tick rate, every case three times on that binary. Identity covers src, fixture, Kconfig, dts, CMakeLists.txt, zephyr and dependencies.json; dependency selection rechecked after execution.",
+    "negative_control": "--negative-control mutations: the unchanged 32768 Hz baseline runs concurrently with the --jobs workers and must pass every named case with three identical-binary repeats for the control to succeed. Every worker must finish successfully; pristine-build failures and exceptions with tracebacks are terminal failures recorded in results.json alongside baseline_passed and mutations. Workers each build a pristine copy once, retaining its SHA-256, .config, zephyr.dts and CMakeCache.txt under worker-N/, then apply one fault at a time, rebuild incrementally, run its named cases and restore the file. Every successful rebuild records the executable SHA-256; equality with the worker's pristine hash is STALE-BINARY, fails and skips cases. Every non-REJECTED fault retains the available executable; failed rebuild logs remain. Each fault applies with the exact match count within the function body or whole file, must build, and must be rejected by the IQSFAIL assertion of every named case; build failures, stale binaries, survivors and faults that never ran fail, reported separately from product runs.",
+    "limits": "Model only: no capacitive front end, gesture classifier, forced-communication clock stretching, wake reseed, electrical timing/bus, contention, keyboard input processors or elapsed time on a board",
+    "model": "Datasheet v1.4: programmed 0x32 window timeout discards window gesture flags/pending report while preserving the current sample for forced/verification reads (100 ms assumed before programming; no documented default), STOP ends session, Show Reset gates event mode, bits 9/10 gate gesture/trackpad events, one-cycle re-ATI, suspend after session. Backpressure: 17 accepted reports, ninth contact read blocks, three independently timed-out windows; all 19 produced contact reports, later lift and triple tap delivered in order. Present sensors finish with no contact/verification work and quiet bus; absent sensors at most three boot attempts. Stationary verified-contact backpressure: expired window and due verification during stall; resume gives exactly 21 reports with contact held, then normal lift gives 24. timeout-invents-lift restores zeroing and must be rejected separately as a model control."
   },
   "kernel": {
     "entry": "tests/kernel/run.py --workspace RESOLVED --core stock-zmk|dya --output FRESH",

@@ -1,0 +1,361 @@
+#!/usr/bin/env python3
+# Copyright (c) 2026 amgskobo
+# SPDX-License-Identifier: MIT
+"""Driver events on the real kernel against a modelled sensor; no physical acceptance."""
+import argparse, difflib, hashlib, json, os, queue, re, shutil, subprocess, tempfile, threading, traceback
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[3]
+# One build at the production boards' tick rate.
+BUILD_EXTRA = ('-DCONFIG_SYS_CLOCK_TICKS_PER_SEC=32768',)
+VARIANT = 'ticks-32768'
+REPEATS = 3
+CASE_TIMEOUT = 60
+TRACE_LINE = re.compile(rb'^IQS(?:TRACE|HID|BUS) .*$', re.M)
+SOURCES = ('src', 'tests/kernel/events', 'Kconfig', 'dts', 'CMakeLists.txt',
+           'zephyr', 'tests/integration/dependencies.json')
+# What a mutation build needs from the owner tree.
+STAGED = ('src', 'dts', 'Kconfig', 'CMakeLists.txt', 'zephyr', 'tests/kernel/events')
+
+
+def select_workspace(workspace, core):
+    pins = json.loads((ROOT/'tests/integration/dependencies.json').read_text())
+    dependencies = {}
+    modules = []
+    listing = subprocess.check_output(['west', 'list', '-f', '{name}|{abspath}'], cwd=workspace, text=True)
+    dependencies['west-list'] = listing.splitlines()
+    dependencies['modules'] = {}
+    for line in listing.splitlines():
+        name, text = line.split('|', 1)
+        path = Path(text)
+        if name in ('zmk', 'zephyr'):
+            rev = subprocess.check_output(['git', '-C', text, 'rev-parse', 'HEAD'], text=True).strip()
+            status = subprocess.check_output(['git', '-C', text, 'status', '--porcelain'], text=True)
+            expected = pins[core if name == 'zmk' else 'zephyr']
+            if rev != expected or status:
+                raise SystemExit('unchanged selected dependency required: '+name)
+            dependencies[name] = {'path': text, 'revision': rev}
+        elif not name.startswith('zmk-') and name != 'manifest':
+            if (path/'zephyr/module.yml').is_file() or (path/'zephyr/CMakeLists.txt').is_file():
+                modules.append(text)
+                rev = subprocess.check_output(['git', '-C', text, 'rev-parse', 'HEAD'], text=True).strip()
+                status = subprocess.check_output(['git', '-C', text, 'status', '--porcelain'], text=True)
+                dependencies['modules'][name] = {'path': text, 'revision': rev, 'status': status}
+    return dependencies, modules
+
+
+def identity(root):
+    files = []
+    for item in SOURCES:
+        path = root/item
+        files.extend(sorted(p for p in path.rglob('*') if p.is_file()) if path.is_dir() else [path])
+    return {p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+            for p in files}
+
+
+def configure(root, workspace, dependencies, modules, folder, log_path):
+    """A pristine build of root into folder. Returns the west exit code."""
+    command = ['west', 'build', '-p=always', '-o=-j2', '-s', dependencies['zmk']['path']+'/app',
+               '-d', str(folder), '-b', 'native_sim//zmk_test_mock', '--',
+               '-DZMK_CONFIG='+str(root/'tests/kernel/events/config'),
+               '-DZEPHYR_MODULES='+';'.join(modules),
+               '-DZMK_EXTRA_MODULES='+str(root/'tests/kernel/events'), *BUILD_EXTRA]
+    env = dict(os.environ, ZEPHYR_BASE=dependencies['zephyr']['path'],
+               Zephyr_DIR=dependencies['zephyr']['path']+'/share/zephyr-package/cmake')
+    log_path.with_name(log_path.stem+'-command.json').write_text(
+        json.dumps({'command': command, 'cwd': str(workspace)}, indent=2))
+    with log_path.open('wb') as log:
+        return subprocess.run(command, cwd=workspace, env=env, stdout=log, stderr=subprocess.STDOUT).returncode
+
+
+def build(root, workspace, dependencies, modules, out):
+    """Build once into out; the binary and its config are retained there."""
+    out.mkdir(parents=True)
+    with tempfile.TemporaryDirectory(prefix='iqs-events-') as temp:
+        folder = Path(temp)/'build'
+        code = configure(root, workspace, dependencies, modules, folder, out/'build.log')
+        (out/'build.exit').write_text(str(code))
+        if code:
+            return None
+        for source, name in ((folder/'zephyr/zmk.exe', 'zmk.exe'), (folder/'zephyr/.config', 'config'),
+                             (folder/'zephyr/zephyr.dts', 'zephyr.dts'), (folder/'CMakeCache.txt', 'CMakeCache.txt')):
+            shutil.copy2(source, out/name)
+    binary = out/'zmk.exe'
+    (out/'binary.sha256').write_text(hashlib.sha256(binary.read_bytes()).hexdigest())
+    return binary
+
+
+def run_case(binary, case, stem):
+    env = dict(os.environ, IQS_KERNEL_CASE=case)
+    try:
+        result = subprocess.run([str(binary)], env=env, capture_output=True, timeout=CASE_TIMEOUT)
+        code, stdout, stderr = result.returncode, result.stdout, result.stderr
+    except subprocess.TimeoutExpired as error:
+        code, stdout, stderr = 124, error.stdout or b'', error.stderr or b''
+    Path(str(stem)+'.stdout').write_bytes(stdout)
+    Path(str(stem)+'.stderr').write_bytes(stderr)
+    Path(str(stem)+'.exit').write_text(str(code))
+    return code, stdout
+
+
+def listed_cases(binary, out):
+    code, output = run_case(binary, '--list', out/'case-list')
+    if code:
+        raise SystemExit('case listing failed: '+str(code))
+    return re.findall(rb'^IQSCASE (\S+)', output, re.M)
+
+
+def run_variant(binary, cases, out):
+    """Every case REPEATS times on one binary; each must pass with one identical trace."""
+    rows = []
+    for case in cases:
+        traces = set()
+        passed = True
+        for repeat in range(1, REPEATS+1):
+            code, stdout = run_case(binary, case, out/f'{case}-{repeat}')
+            valid = code == 0 and ('IQS kernel EVENTS PASS case='+case+'\n').encode() in stdout
+            traces.add(tuple(TRACE_LINE.findall(stdout)))
+            rows.append(dict(case=case, repeat=repeat, exit=code, pass_verified=valid))
+            passed = passed and valid
+        deterministic = len(traces) == 1
+        status = 'PASS' if passed and deterministic else 'FAIL'
+        note = '' if deterministic else ' (traces differ between identical runs)'
+        print(f'{out.name} {case}: {status}{note}', flush=True)
+        rows.append(dict(case=case, identical_traces=deterministic))
+    (out/'results.json').write_text(json.dumps(rows, indent=2))
+    return all(row.get('pass_verified', row.get('identical_traces')) for row in rows)
+
+
+def expected_cases(mutation):
+    """One case name, or a list of them; every one must reject the fault."""
+    cases = mutation['expect_case']
+    return [cases] if isinstance(cases, str) else list(cases)
+
+
+def apply_mutation(stage, mutation):
+    path = stage/mutation['file']
+    text = path.read_text()
+    start, end = 0, len(text)
+    if 'within' in mutation:
+        anchor = mutation['within']
+        if text.count(anchor) != 1:
+            raise SystemExit('ambiguous function anchor: '+mutation['name'])
+        start = text.index(anchor)
+        closing = re.search(r'^}\r?$', text[start:], re.M)
+        if closing is None:
+            raise SystemExit('missing function end: '+mutation['name'])
+        end = start + closing.end()
+    body = text[start:end]
+    expected = mutation.get('count', 1)
+    if expected < 1 or body.count(mutation['before']) != expected:
+        raise SystemExit('mutation match count differs: '+mutation['name'])
+    path.write_text(text[:start]+body.replace(mutation['before'], mutation['after'])+text[end:])
+
+
+def stage_owner(stage):
+    for item in STAGED:
+        source = ROOT/item
+        if source.is_dir():
+            shutil.copytree(source, stage/item)
+        else:
+            (stage/item).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, stage/item)
+
+
+def judge_mutation(stage, folder, mutation, target, pristine_hash):
+    """Apply one fault to the worker's tree, rebuild incrementally, run its cases, restore."""
+    name = mutation['name']
+    path = stage/mutation['file']
+    original = path.read_text()
+    binary = folder/'zephyr/zmk.exe'
+    row = dict(mutation=name, result='EXCEPTION')
+    try:
+        try:
+            apply_mutation(stage, mutation)
+        except SystemExit as error:
+            row.update(result='NOT-APPLIED', detail=str(error))
+            return row
+        (target/'mutation.diff').write_text(''.join(difflib.unified_diff(
+            original.splitlines(True), path.read_text().splitlines(True),
+            'a/'+mutation['file'], 'b/'+mutation['file'])))
+        with (target/'build.log').open('wb') as log:
+            code = subprocess.run(['cmake', '--build', str(folder)], stdout=log,
+                                  stderr=subprocess.STDOUT).returncode
+        (target/'build.exit').write_text(str(code))
+        if code:
+            row['result'] = 'BUILD-FAILED'
+            return row
+        row['binary_sha256'] = hashlib.sha256(binary.read_bytes()).hexdigest()
+        if row['binary_sha256'] == pristine_hash:
+            row['result'] = 'STALE-BINARY'
+            return row
+        rows = []
+        for case in expected_cases(mutation):
+            code, stdout = run_case(binary, case, target/case)
+            marker = ('IQSFAIL case='+case).encode()
+            first = next((line for line in stdout.splitlines() if line.startswith(marker)), b'').decode()
+            rows.append(dict(case=case, exit=code, rejected=code != 0 and marker in stdout, line=first))
+        rejected = all(row['rejected'] for row in rows)
+        row.update(result='REJECTED' if rejected else 'SURVIVED', cases=rows)
+        return row
+    except BaseException:
+        # Keep the successful rebuild's hash even if case execution raises.
+        row.update(result='EXCEPTION', traceback=traceback.format_exc())
+        return row
+    finally:
+        try:
+            if row['result'] != 'REJECTED' and binary.is_file():
+                shutil.copy2(binary, target/'zmk.exe')
+        finally:
+            path.write_text(original)
+
+
+def run_mutations(selected, jobs, workspace, dependencies, modules, out):
+    """Each fault must build, and every named case must reject it by assertion."""
+    mutations = json.loads((ROOT/'tests/kernel/events/mutations.json').read_text())['mutations']
+    if selected:
+        mutations = [m for m in mutations if m['name'] in selected]
+    if selected and set(selected) - {m['name'] for m in mutations}:
+        raise SystemExit('unknown mutation')
+    names = [m['name'] for m in mutations]
+    if len(names) != len(set(names)):
+        raise SystemExit('duplicate mutation names')
+    required = sorted(json.loads((ROOT/'tests/kernel/events/cases.json').read_text())['cases'])
+    for mutation in mutations:
+        if not set(expected_cases(mutation)) <= set(required):
+            raise SystemExit('unknown expected case: '+mutation['name'])
+
+    pending = queue.Queue()
+    for mutation in mutations:
+        pending.put(mutation)
+    results = {}
+    lock = threading.Lock()
+    baseline_ok = []
+    worker_statuses = [None] * max(1, jobs)
+
+    def baseline():
+        # Concurrent admission: each named oracle must also pass unchanged.
+        target = out/'baseline'
+        binary = build(ROOT, workspace, dependencies, modules, target)
+        if binary is None:
+            baseline_ok.append(False)
+            return
+        if sorted(case.decode() for case in listed_cases(binary, target)) != required:
+            baseline_ok.append(False)
+            print('baseline: the fixture and cases.json name different cases', flush=True)
+            return
+        cases = sorted({case for m in mutations for case in expected_cases(m)})
+        baseline_ok.append(run_variant(binary, cases, target))
+
+    def worker(index):
+        status = dict(worker=index, result='SUCCESS')
+        try:
+            evidence = out/f'worker-{index}'
+            evidence.mkdir()
+            with tempfile.TemporaryDirectory(prefix=f'iqs-mutation-{index}-') as temp:
+                stage = Path(temp)/'owner'
+                folder = Path(temp)/'build'
+                stage_owner(stage)
+                code = configure(stage, workspace, dependencies, modules, folder, evidence/'build.log')
+                (evidence/'build.exit').write_text(str(code))
+                if code:
+                    status.update(result='PRISTINE-BUILD-FAILED', exit=code)
+                    print(f'worker {index}: pristine build failed ({code})', flush=True)
+                    return
+                pristine_hash = hashlib.sha256((folder/'zephyr/zmk.exe').read_bytes()).hexdigest()
+                status['pristine_sha256'] = pristine_hash
+                (evidence/'binary.sha256').write_text(pristine_hash)
+                for source, name in ((folder/'zephyr/.config', '.config'),
+                                     (folder/'zephyr/zephyr.dts', 'zephyr.dts'),
+                                     (folder/'CMakeCache.txt', 'CMakeCache.txt')):
+                    shutil.copy2(source, evidence/name)
+                while True:
+                    try:
+                        mutation = pending.get_nowait()
+                    except queue.Empty:
+                        break
+                    target = out/mutation['name']
+                    target.mkdir()
+                    row = judge_mutation(stage, folder, mutation, target, pristine_hash)
+                    row['worker'] = index
+                    with lock:
+                        results[mutation['name']] = row
+                    if row['result'] == 'EXCEPTION':
+                        status.update(result='EXCEPTION', traceback=row['traceback'])
+                        break
+                    lines = ' '.join(case['line'] for case in row.get('cases', []))
+                    print(f"{mutation['name']}: {row['result']} {lines}".rstrip(), flush=True)
+        except BaseException:
+            # SystemExit from admission helpers must also become a terminal verdict.
+            status.update(result='EXCEPTION', traceback=traceback.format_exc())
+        finally:
+            with lock:
+                worker_statuses[index] = status
+
+    threads = [threading.Thread(target=baseline)]
+    threads += [threading.Thread(target=worker, args=(i,)) for i in range(max(1, jobs))]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    rows = [results.get(name, dict(mutation=name, result='NOT-RUN')) for name in names]
+    (out/'results.json').write_text(json.dumps(dict(
+        baseline_passed=baseline_ok == [True], workers=worker_statuses, mutations=rows), indent=2))
+    counts = {}
+    for row in rows:
+        counts[row['result']] = counts.get(row['result'], 0) + 1
+    print('mutations: '+', '.join(f'{key} {value}' for key, value in sorted(counts.items())), flush=True)
+    # A baseline thread that stopped early leaves no verdict, which is a failure too.
+    return (bool(rows) and baseline_ok == [True]
+            and all(status is not None and status['result'] == 'SUCCESS' for status in worker_statuses)
+            and all(row['result'] == 'REJECTED' for row in rows))
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--workspace', required=True, type=Path)
+    parser.add_argument('--core', required=True, choices=('stock-zmk', 'dya'))
+    parser.add_argument('--output', required=True, type=Path)
+    parser.add_argument('--case', action='append', default=[], help='run only this case; repeatable')
+    parser.add_argument('--negative-control', choices=('mutations',))
+    parser.add_argument('--mutation', action='append', default=[], help='with mutations: only this one; repeatable')
+    parser.add_argument('--jobs', type=int, default=4, help='with mutations: parallel build trees (default 4)')
+    args = parser.parse_args()
+    out = args.output
+    if not out.is_absolute() or out.exists() or out.is_symlink():
+        parser.error('output must be a fresh absolute path')
+    out.mkdir(parents=True, exist_ok=False)
+    workspace = args.workspace.resolve()
+    dependencies, modules = select_workspace(workspace, args.core)
+    (out/'dependencies.json').write_text(json.dumps(dependencies, indent=2))
+    before = identity(ROOT)
+    (out/'source-before.json').write_text(json.dumps(before, indent=2))
+
+    if args.negative_control:
+        passed = run_mutations(args.mutation, args.jobs, workspace, dependencies, modules, out)
+    else:
+        required = sorted(json.loads((ROOT/'tests/kernel/events/cases.json').read_text())['cases'])
+        unknown = set(args.case) - set(required)
+        if unknown:
+            parser.error('unknown case: '+', '.join(sorted(unknown)))
+        target = out/VARIANT
+        binary = build(ROOT, workspace, dependencies, modules, target)
+        if binary is None:
+            print((target/'build.log').read_text()[-5000:])
+            raise SystemExit(1)
+        if sorted(case.decode() for case in listed_cases(binary, target)) != required:
+            raise SystemExit('the fixture and cases.json name different cases')
+        passed = run_variant(binary, args.case or required, target)
+
+    after_dependencies, after_modules = select_workspace(workspace, args.core)
+    (out/'dependencies-after.json').write_text(json.dumps(after_dependencies, indent=2))
+    selection_unchanged = dependencies == after_dependencies and modules == after_modules
+    after = identity(ROOT)
+    (out/'source-after.json').write_text(json.dumps(after, indent=2))
+    if before != after or not selection_unchanged or not passed:
+        raise SystemExit(1)
+
+
+if __name__ == '__main__':
+    main()

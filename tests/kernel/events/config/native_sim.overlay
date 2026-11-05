@@ -1,0 +1,95 @@
+/* Copyright (c) 2026 amgskobo
+ * SPDX-License-Identifier: MIT
+ */
+#include <zephyr/dt-bindings/gpio/gpio.h>
+
+&i2c0 {
+    /* Tap, report and verification settings of a production pointer device. */
+    iqs_pointer: iqs7211e@56 {
+        compatible = "azoteq,iqs7211e";
+        reg = <0x56>;
+        irq-gpios = <&gpio0 1 GPIO_ACTIVE_LOW>;
+        single-tap = <0>;
+        double-tap = <0>;
+        triple-tap = <0>;
+        rotate-cw = <0>;
+        report-abs;
+        touch-verify-interval-ms = <120>;
+    };
+    /* A different button for each tap. */
+    iqs_map: iqs7211e@57 {
+        compatible = "azoteq,iqs7211e";
+        reg = <0x57>;
+        irq-gpios = <&gpio0 2 GPIO_ACTIVE_LOW>;
+        single-tap = <1>;
+        double-tap = <2>;
+        triple-tap = <3>;
+        report-abs;
+    };
+    /* Taps off: explicit raw cells and an omitted property. */
+    iqs_off: iqs7211e@58 {
+        compatible = "azoteq,iqs7211e";
+        reg = <0x58>;
+        irq-gpios = <&gpio0 3 GPIO_ACTIVE_LOW>;
+        single-tap = <(-1)>;
+        triple-tap = <(-1)>;
+        report-abs;
+    };
+    /* Direct relative reports. */
+    iqs_rel: iqs7211e@59 {
+        compatible = "azoteq,iqs7211e";
+        reg = <0x59>;
+        irq-gpios = <&gpio0 4 GPIO_ACTIVE_LOW>;
+        single-tap = <0>;
+        double-tap = <0>;
+        triple-tap = <0>;
+    };
+    iqs_rot1: iqs7211e@5a {
+        compatible = "azoteq,iqs7211e";
+        reg = <0x5a>;
+        irq-gpios = <&gpio0 5 GPIO_ACTIVE_LOW>;
+        rotate-cw = <1>;
+        report-abs;
+    };
+    iqs_rot2: iqs7211e@5b {
+        compatible = "azoteq,iqs7211e";
+        reg = <0x5b>;
+        irq-gpios = <&gpio0 6 GPIO_ACTIVE_LOW>;
+        rotate-cw = <2>;
+        report-abs;
+    };
+    iqs_rot3: iqs7211e@5c {
+        compatible = "azoteq,iqs7211e";
+        reg = <0x5c>;
+        irq-gpios = <&gpio0 7 GPIO_ACTIVE_LOW>;
+        rotate-cw = <3>;
+        report-abs;
+    };
+    /* Host touch verification off. */
+    iqs_nov: iqs7211e@5d {
+        compatible = "azoteq,iqs7211e";
+        reg = <0x5d>;
+        irq-gpios = <&gpio0 8 GPIO_ACTIVE_LOW>;
+        single-tap = <0>;
+        double-tap = <0>;
+        triple-tap = <0>;
+        report-abs;
+        touch-verify-interval-ms = <0>;
+    };
+};
+
+/ {
+    /* The real ZMK listener, with no input processors, ahead of the HID report. */
+    pointer_listener {
+        compatible = "zmk,input-listener";
+        device = <&iqs_pointer>;
+    };
+    map_listener {
+        compatible = "zmk,input-listener";
+        device = <&iqs_map>;
+    };
+    rel_listener {
+        compatible = "zmk,input-listener";
+        device = <&iqs_rel>;
+    };
+};

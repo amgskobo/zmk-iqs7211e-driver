@@ -12,6 +12,10 @@ Covered sequences:
 
 - Sensor reset after a click press; failed release is retried without replaying
   the remaining double/triple-click presses.
+- A triple tap queues six edges and plays three ordered, synced press/release
+  pairs. Each edge but the last requests the next one a click-edge delay later;
+  a failed press or release is retried alone, and a failed reschedule abandons
+  the remaining clicks without stranding a press.
 - Repeated touch-release failures, coordinate-sync failure, and eventual recovery.
 - Configured tap gestures are always emitted; routing and selective suppression
   are downstream input-processor responsibilities.

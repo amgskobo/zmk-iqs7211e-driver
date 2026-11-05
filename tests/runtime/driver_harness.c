@@ -902,6 +902,14 @@ static void test_clicks(void) {
     iqs7211e_queue_clicks(&data, INPUT_BTN_2, 3);
     assert(data.click_edges == 0);
     reschedule_result = 0;
+
+    /* A triple tap owes three press/release pairs, the first edge at once. */
+    data.click_work.scheduled = false;
+    data.click_work.delay_ms = -1;
+    iqs7211e_queue_clicks(&data, INPUT_BTN_2, 3);
+    assert(data.click_edges == 6 && data.click_button == INPUT_BTN_2);
+    assert(data.click_work.scheduled && data.click_work.delay_ms == 0);
+    data.click_edges = 0;
 }
 
 /* ----- Power management ----- */

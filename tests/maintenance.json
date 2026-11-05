@@ -13,7 +13,11 @@
     "python3 -m unittest discover -s tests/integration -p test_*.py -v; fresh output paths before west",
     "python3 tests/kernel/run.py --workspace RESOLVED --core stock-zmk|dya --output FRESH; ordinary/click/input-consumer PM rejection and external recovery with exactly one owed release, three identical-binary repeats",
     "python3 tests/kernel/run.py --workspace RESOLVED --core dya --output FRESH --negative-control invalid-priority; named build-time rejection",
-    "python3 -m unittest discover -s tests -p test_timeout_width.py -v (also canonical host quick/full)"
+    "python3 tests/kernel/events/run.py --workspace RESOLVED --core stock-zmk|dya --output FRESH; one build at the production 32768 Hz tick rate; every case three identical-binary repeats with identical printed traces including raw ticks; exact report contents/order, selected transactions and observed delay bounds",
+    "python3 tests/kernel/events/run.py --workspace RESOLVED --core dya --output FRESH --negative-control mutations; unchanged 32768 Hz baseline runs concurrently with --jobs workers (default 4) and must pass all named cases for the control to succeed; every worker must finish successfully, with pristine-build failures and exceptions/tracebacks retained in results.json; worker-N retains pristine SHA-256/config/DTS/CMake cache; exact scoped match counts; each fault is rebuilt incrementally with executable SHA-256 recorded, rejects unchanged pristine hashes as STALE-BINARY without running cases, otherwise runs once and must be rejected by every named case; non-REJECTED results retain the available executable",
+    "python3 -m unittest discover -s tests -p test_timeout_width.py -v (also canonical host quick/full)",
+    "python3 -m unittest discover -s tests/kernel/events -p test_runner.py -v; prepared-container controls for exact mutation counts/function scope, source identity, catalogue admission, failed case-list retention, terminal worker failures/exceptions, stale binaries, retained worker/fault evidence and baseline/worker/fault success admission",
+    "python3 tests/kernel/events/run.py --workspace RESOLVED --core dya --output FRESH --negative-control mutations --mutation timeout-invents-lift; unchanged new-case baseline runs concurrently with workers and must pass for the control to succeed; disposable-copy register-zeroing control must fail input_backpressure_verify_contact; separate from product results"
   ],
   "coverage_map": "tests/contract.json",
   "preserved_assertions": "Relocated fixtures retain their prior assertions; no snapshot auto-accept or unique assertion removal.",
@@ -26,6 +30,7 @@
     "Physical USB/BLE/split delivery, timing, power and retention require matching production-board evidence.",
     "Timing/FLOW/stack measurement retired; exact source and unique assertion map in tests/retired-measurements.md.",
     "Complete-source native PM fixture uses actual work cancellation and GPIO emulation; no electrical I2C/RDY, sensor wake reseed, shared-bus timing or physical PM acceptance.",
+    "Kernel event fixture models the sensor: no capacitive front end, gesture classifier, forced-communication clock stretching, wake reseed, electrical timing/bus, bus contention or elapsed time on a board. Input report failures cannot be injected through the real input queue and stay with the host harnesses. Routing through a keyboard's input processors belongs to the consuming keyboard.",
     "GitHub host CI does not run the separately documented pinned native/API or consuming board builds."
   ],
   "timeout_conversion": "Full uint16 verification intervals, exact ceiling and tick ABI. Host checks cover all 65536 waits at 14 rates, both tick widths, optimized/sanitized/coverage/m32 variants and identified math/width controls. The complete-source native fixture compares the actual Zephyr conversion at 7 rates while preserving all 3 PM contexts and 3 repeats of the same binary. Physical timing remains unmeasured.",
