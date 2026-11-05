@@ -221,8 +221,11 @@ before the next. Mutation matches must have the exact declared count, restricted
 to the named function body where specified. A fault names one case, or a list
 when one edit is the designated check of several cases; it must build and be
 rejected by the `IQSFAIL` assertion of every named case. A fault that does not
-build, that survives, or that never ran fails the control. Every worker must finish
-successfully too: a pristine-build failure or an exception (including its traceback)
+build, that survives, or that never ran fails the control.
+The rejection must be an entire `IQSFAIL case=NAME line=NUMBER: ...` line and
+exit 1. Timeouts, signals, other exit codes and failures from similarly named
+cases do not qualify, even if their output mentions the expected marker.
+Every worker must finish successfully too: a pristine-build failure or an exception (including its traceback)
 is a terminal failure even if other workers handle every fault. The top-level
 `results.json` records `baseline_passed`, `workers` and `mutations`. Each `worker-N/`
 retains its pristine executable's SHA-256, `.config`, `zephyr.dts`, `CMakeCache.txt`
@@ -273,6 +276,11 @@ sensors during the 300-ms settle. Absent sensors may make only three boot attemp
 
 The entry retains case-list stdout/stderr/exit and checks both the owner identity
 and resolved dependency selection before and after execution.
+It normalizes the output path and rejects evidence inside the owner, workspace
+or any selected west project before creating directories, including parent aliases
+and uncloned project roots. External siblings and safe aliases remain supported;
+discarded `..` components cannot create directories in a source. The runner
+admission controls cover these paths and exact named-assertion rejection as well.
 
 This fixture does not establish physical behaviour. The model has no capacitive
 front end or gesture classifier, so whether a real part flags a triple tap remains

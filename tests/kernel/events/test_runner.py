@@ -4,7 +4,9 @@
 from contextlib import contextmanager, ExitStack
 import hashlib
 import importlib.util
+import io
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -19,7 +21,7 @@ spec.loader.exec_module(runner)
 class RunnerControls(unittest.TestCase):
     @contextmanager
     def mutation_control(self, *, worker_failure=None, rebuild='changed', baseline_passed=True,
-                         rejected=True, case_exception=False):
+                         rejected=True, case_exception=False, case_exit=None, case_stdout=None):
         """Exercise the real queue/judge with synthetic builds, never west or a binary."""
         with tempfile.TemporaryDirectory() as temp, ExitStack() as patches:
             root = Path(temp)/'root'
@@ -70,7 +72,9 @@ class RunnerControls(unittest.TestCase):
             def run_case(binary, case, stem):
                 if case_exception:
                     raise RuntimeError('synthetic case exception')
-                return (1, b'IQSFAIL case=oracle: synthetic assertion\n') if rejected else (0, b'')
+                if case_exit is not None:
+                    return case_exit, case_stdout
+                return (1, b'IQSFAIL case=oracle line=1: synthetic assertion\n') if rejected else (0, b'')
 
             patches.enter_context(patch.object(runner, 'ROOT', root))
             patches.enter_context(patch.object(runner, 'stage_owner', side_effect=stage_owner))
@@ -147,6 +151,20 @@ class RunnerControls(unittest.TestCase):
             self.assertFalse(result['baseline_passed'])
             self.assertEqual([worker['result'] for worker in result['workers']], ['SUCCESS'] * 2)
             self.assertEqual([row['result'] for row in result['mutations']], ['REJECTED'] * 2)
+
+    def test_only_the_named_assertion_exit_qualifies_as_a_rejection(self):
+        assertion = b'IQSFAIL case=oracle line=1: synthetic assertion\n'
+        for code, stdout in ((124, assertion), (-6, assertion), (7, assertion),
+                             (1, b'IQSFAIL case=oracle_extra line=1: unrelated case\n'),
+                             (1, b'diagnostic mentions IQSFAIL case=oracle line=1: failure\n')):
+            with self.subTest(code=code, stdout=stdout), \
+                 self.mutation_control(case_exit=code, case_stdout=stdout) as control:
+                passed, result, out, cases = control
+                self.assertFalse(passed)
+                for row in result['mutations']:
+                    self.assertNotEqual(row['result'], 'REJECTED')
+                    self.assertFalse(row['cases'][0]['rejected'])
+                    self.assertTrue((out/row['mutation']/'zmk.exe').is_file())
 
     def test_failed_rebuild_retains_log_and_available_executable(self):
         with self.mutation_control(rebuild='failed') as (passed, result, out, cases):
@@ -254,6 +272,151 @@ class RunnerControls(unittest.TestCase):
                 shutil.copy2(source, target)
                 runner.apply_mutation(stage, fault)
                 self.assertNotEqual(source.read_bytes(), target.read_bytes(), fault['name'])
+
+
+class OutputRoots(unittest.TestCase):
+    @contextmanager
+    def fixture(self):
+        """Drive main with synthetic inputs; no west, compiler or product binary."""
+        with tempfile.TemporaryDirectory() as temp, ExitStack() as patches:
+            base = Path(temp)
+            roots = {name: base/name for name in ('owner', 'workspace', 'manifest', 'zmk',
+                                                 'zephyr', 'hal', 'uncloned')}
+            for name, path in roots.items():
+                if name != 'uncloned':
+                    path.mkdir()
+                    (path/'sentinel').write_text('synthetic input: retain')
+            owner = roots['owner']
+            for item in runner.SOURCES:
+                path = owner/item
+                path.parent.mkdir(parents=True, exist_ok=True)
+                if item == 'tests/kernel/events':
+                    path.mkdir()
+                    (path/'cases.json').write_text(json.dumps(dict(cases={'oracle': 'synthetic'})))
+                else:
+                    path.write_text('synthetic source')
+            pins = {'stock-zmk': 'a'*40, 'dya': 'b'*40, 'zephyr': 'c'*40}
+            (owner/'tests/integration/dependencies.json').write_text(json.dumps(pins))
+            projects = {name: path for name, path in roots.items() if name not in ('owner', 'workspace')}
+
+            def check_output(command, **kwargs):
+                if command[0] == 'west':
+                    return ''.join(f'{name}|{path}\n' for name, path in projects.items())
+                if command[0] == 'git':
+                    if command[3:] == ['status', '--porcelain']:
+                        return ''
+                    name = Path(command[2]).name
+                    return pins['dya' if name == 'zmk' else name]+'\n'
+                raise AssertionError(command)
+
+            def build(root, workspace, dependencies, modules, target):
+                target.mkdir()
+                binary = target/'zmk.exe'
+                binary.write_text('synthetic executable')
+                return binary
+
+            patches.enter_context(patch.object(runner, 'ROOT', owner))
+            commands = patches.enter_context(patch.object(runner.subprocess, 'check_output',
+                                                         side_effect=check_output))
+            builder = patches.enter_context(patch.object(runner, 'build', side_effect=build))
+            patches.enter_context(patch.object(runner, 'listed_cases', return_value=[b'oracle']))
+            patches.enter_context(patch.object(runner, 'run_variant', return_value=True))
+            yield base, roots, projects, commands, builder
+
+    def snapshot(self, roots):
+        return {name: [(p.relative_to(root).as_posix(),
+                        p.read_bytes() if p.is_file() else None)
+                       for p in sorted(root.rglob('*'))] if root.exists() else None
+                for name, root in roots.items()}
+
+    def invoke(self, roots, output):
+        from contextlib import redirect_stderr
+        argv = ['run.py', '--workspace', str(roots['workspace']), '--core', 'dya',
+                '--output', str(output)]
+        stderr = io.StringIO()
+        with patch.object(sys, 'argv', argv), redirect_stderr(stderr):
+            try:
+                runner.main()
+                code = 0
+            except SystemExit as error:
+                code = error.code
+        return code, stderr.getvalue()
+
+    def test_source_roots_and_parent_aliases_are_rejected_before_writes(self):
+        for name in ('owner', 'workspace', 'manifest', 'zmk', 'zephyr', 'hal', 'uncloned'):
+            for alias in (False, True):
+                with self.subTest(root=name, alias=alias), self.fixture() as fixture:
+                    base, roots, projects, commands, builder = fixture
+                    parent = roots[name]
+                    if alias:
+                        parent = base/'alias'
+                        parent.symlink_to(roots[name], target_is_directory=True)
+                        if name in projects:
+                            projects[name] = parent
+                    output = parent/'new/deep'
+                    before = self.snapshot(roots)
+                    code, stderr = self.invoke(roots, output)
+                    self.assertEqual(self.snapshot(roots), before, 'input roots changed')
+                    self.assertEqual(code, 2, stderr)
+                    self.assertIn('outside', stderr)
+                    builder.assert_not_called()
+                    self.assertTrue(all(call.args[0][0] == 'west' for call in commands.call_args_list))
+
+    def test_uncloned_root_equality_is_rejected_before_writes(self):
+        with self.fixture() as fixture:
+            base, roots, projects, commands, builder = fixture
+            before = self.snapshot(roots)
+            code, stderr = self.invoke(roots, roots['uncloned'])
+            self.assertEqual(self.snapshot(roots), before, 'input roots changed')
+            self.assertEqual(code, 2, stderr)
+            self.assertIn('outside', stderr)
+            builder.assert_not_called()
+
+    def test_normalized_external_output_preserves_discarded_source_parents(self):
+        with self.fixture() as fixture:
+            base, roots, projects, commands, builder = fixture
+            before = self.snapshot(roots)
+            code, stderr = self.invoke(roots, roots['owner']/'unused/../../safe-results')
+            self.assertEqual(code, 0, stderr)
+            self.assertEqual(self.snapshot(roots), before, 'input roots changed')
+            self.assertTrue((base/'safe-results/source-after.json').is_file())
+            builder.assert_called_once()
+
+    def test_normalized_existing_output_and_symlink_loops_reject_before_discovery(self):
+        for kind in ('existing', 'loop'):
+            with self.subTest(kind=kind), self.fixture() as fixture:
+                base, roots, projects, commands, builder = fixture
+                if kind == 'existing':
+                    previous = base/'previous'
+                    previous.mkdir()
+                    (previous/'sentinel').write_text('retain evidence')
+                    output = roots['owner']/'unused/../../previous'
+                else:
+                    loop = base/'loop'
+                    loop.symlink_to(loop, target_is_directory=True)
+                    output = loop/'new'
+                before = self.snapshot(roots)
+                code, stderr = self.invoke(roots, output)
+                self.assertEqual(self.snapshot(roots), before, 'input roots changed')
+                self.assertEqual(code, 2, stderr)
+                commands.assert_not_called()
+                builder.assert_not_called()
+
+    def test_external_sibling_and_parent_alias_remain_supported(self):
+        for alias in (False, True):
+            with self.subTest(alias=alias), self.fixture() as fixture:
+                base, roots, projects, commands, builder = fixture
+                output = base/'zmk-results'
+                if alias:
+                    link = base/'output-alias'
+                    link.symlink_to(base, target_is_directory=True)
+                    output = link/output.name
+                before = self.snapshot(roots)
+                code, stderr = self.invoke(roots, output)
+                self.assertEqual(code, 0, stderr)
+                self.assertEqual(self.snapshot(roots), before)
+                self.assertTrue((output/'source-after.json').is_file())
+                builder.assert_called_once()
 
 
 if __name__ == '__main__':

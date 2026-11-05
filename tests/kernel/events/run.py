@@ -18,11 +18,21 @@ SOURCES = ('src', 'tests/kernel/events', 'Kconfig', 'dts', 'CMakeLists.txt',
 STAGED = ('src', 'dts', 'Kconfig', 'CMakeLists.txt', 'zephyr', 'tests/kernel/events')
 
 
-def select_workspace(workspace, core):
+def reject_source_output(output, roots):
+    """Resolve aliases before any evidence write can create a source directory."""
+    for root in roots:
+        source = Path(root).resolve()
+        if output == source or source in output.parents:
+            raise ValueError('output must be outside owner, workspace and selected source roots')
+
+
+def select_workspace(workspace, core, output=None):
     pins = json.loads((ROOT/'tests/integration/dependencies.json').read_text())
     dependencies = {}
     modules = []
     listing = subprocess.check_output(['west', 'list', '-f', '{name}|{abspath}'], cwd=workspace, text=True)
+    if output is not None:
+        reject_source_output(output, (line.split('|', 1)[1] for line in listing.splitlines()))
     dependencies['west-list'] = listing.splitlines()
     dependencies['modules'] = {}
     for line in listing.splitlines():
@@ -192,9 +202,9 @@ def judge_mutation(stage, folder, mutation, target, pristine_hash):
         rows = []
         for case in expected_cases(mutation):
             code, stdout = run_case(binary, case, target/case)
-            marker = ('IQSFAIL case='+case).encode()
-            first = next((line for line in stdout.splitlines() if line.startswith(marker)), b'').decode()
-            rows.append(dict(case=case, exit=code, rejected=code != 0 and marker in stdout, line=first))
+            assertion = re.compile(rb'^IQSFAIL case='+re.escape(case.encode())+rb' line=[0-9]+: .+$')
+            first = next((line for line in stdout.splitlines() if assertion.fullmatch(line)), b'').decode()
+            rows.append(dict(case=case, exit=code, rejected=code == 1 and bool(first), line=first))
         rejected = all(row['rejected'] for row in rows)
         row.update(result='REJECTED' if rejected else 'SURVIVED', cases=rows)
         return row
@@ -325,9 +335,19 @@ def main():
     out = args.output
     if not out.is_absolute() or out.exists() or out.is_symlink():
         parser.error('output must be a fresh absolute path')
-    out.mkdir(parents=True, exist_ok=False)
+    try:
+        out = out.resolve()
+    except (OSError, RuntimeError) as error:
+        parser.error(f'cannot resolve output path: {error}')
+    if out.exists():
+        parser.error('output must be a fresh absolute path')
     workspace = args.workspace.resolve()
-    dependencies, modules = select_workspace(workspace, args.core)
+    try:
+        reject_source_output(out, (ROOT, workspace))
+        dependencies, modules = select_workspace(workspace, args.core, output=out)
+    except ValueError as error:
+        parser.error(str(error))
+    out.mkdir(parents=True, exist_ok=False)
     (out/'dependencies.json').write_text(json.dumps(dependencies, indent=2))
     before = identity(ROOT)
     (out/'source-before.json').write_text(json.dumps(before, indent=2))
