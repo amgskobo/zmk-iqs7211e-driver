@@ -11,11 +11,25 @@ ZMK_TEST_MODE=full bash tests/run-host-docker.sh
 On PowerShell, set `$env:ZMK_TEST_MODE="full"` for the second command
 and invoke Git Bash explicitly. Remove the variable for the default quick run.
 
-Quick executes **all behavioral fixtures and scenarios** once with
+Quick executes **all host behavioral fixtures and scenarios** once with
 AddressSanitizer/UndefinedBehaviorSanitizer. Full repeats those same assertions
 under the retained optimization, coverage and (where already present) 32-bit
-variants. CI uses quick for push/PR and full for scheduled/manual runs.
+variants. CI uses quick for pushes to `main` and for pull requests, and full
+for scheduled/manual runs. Neither host mode invokes the separate API, tap-range,
+kernel PM or kernel event entries documented below.
 Unknown mode values fail; there is no silent skipped success.
+
+Launch `tests/run-host-docker.sh` from the host. The direct Python and filter
+commands below are inner entries: run them from this owner root inside a prepared
+Docker container. The native and firmware entries need resolved workspaces at
+the revisions in [integration/dependencies.json](integration/dependencies.json)
+and the selected toolchain already installed. Mount required source inputs
+read-only and retain evidence outside them on a mounted volume or export it
+before removing the container. These entries do not prepare or fetch dependencies.
+
+The canonical host entry also loads the inexpensive kernel-event runner controls
+through `tests/test_kernel_event_runner.py`. Invalid evidence or selections fail
+there before the separate native builds; the controls do not build firmware.
 
 ## Retained behavioral contracts
 
@@ -89,6 +103,11 @@ checks required Kconfig, actual compiled source units and the UF2. Outputs
 include source/dependency identities, exact commands, config, DTS and binaries.
 The fixture establishes API/DT compilation, not physical wiring or runtime
 timing. No network update or dependency source patch is performed.
+
+The XIAO fixture uses the production Nordic TWIM backend with 32-byte concat/flash
+buffers for a register byte plus the driver's largest 30-byte settings block, and
+active-low RDY. Inspect effective config/DTS and linked backend symbols: compilation
+alone does not exercise those transfers, interrupts or physical timing.
 
 ## PM boundary regressions
 
@@ -201,46 +220,91 @@ asserts: boot and setup recovery, contacts, rotation, touch verification, taps, 
 and bus failures, a stopped input consumer, runtime resets, PM, two sensors on one
 queue, and HID reports. The entry requires the fixture to list exactly those cases.
 Each case runs three times on one binary and must print its completion marker, exit
-0 and repeat one identical printed trace, including raw ticks in input, HID and bus
+0 and repeat one identical printed trace, including raw ticks in input, HID, bus and RDY
 lines. The fixture builds once, at the 32768 Hz tick rate of the production boards;
 the native_sim default of 1000 Hz adds no production case and is not built.
 Assertions check exact report contents and order, selected bus transactions, and
 bounds on observed delays. They do not assert exact requested delays. Time is
 virtual; observed scheduling comes from the kernel rather than host load.
-`--case NAME` selects a case for diagnosis.
+Every repeat requires exactly one complete named completion line, nonempty
+input/HID/bus/RDY observations and no `IQSFAIL` line. An empty case selection,
+completion text embedded in diagnostics or duplicated completions cannot pass.
+`--case NAME` selects a case for diagnosis and can be repeated to select several
+cases. Repeated names select a case once, in first-occurrence order; each selected
+case still runs three times. Its stdout/stderr/exit files are written once per
+repeat, preserving the first execution evidence.
 
 Expected traces are derived from the driver's contract, including the filter's
 exact output for a given input; none is captured from a run. The negative control
 applies each fault in [kernel/events/mutations.json](kernel/events/mutations.json)
-to a disposable copy, at the same tick rate. The unchanged baseline runs concurrently
-with `--jobs` workers (default 4) and must pass every named case with three
-identical-binary repeats for the control to succeed. Each worker builds a pristine
-copy once. A worker then applies one fault at a time,
+to a disposable copy, at the same tick rate. The unchanged baseline is an independent
+copy of the first successful worker's pristine executable, config, DTS, CMake cache
+and build evidence; its SHA-256 and `source_worker` are recorded. It runs concurrently
+with `--jobs` workers (default 4, capped by the number of selected faults) and must
+pass every case named by the selected faults with three identical-binary repeats.
+There is no extra baseline build, and workers mutate only their own executable.
+That core's baseline can also supply its normal product evidence when its
+`baseline/results.json` covers exactly every name in `cases.json`, with three
+successful repeats and identical nonempty traces per case, and the retained
+binary/config/source/dependency identities match the selected configuration.
+Check that coverage before omitting a separate product build and run. A selected
+`--mutation` baseline that omits catalogue cases supplies only focused evidence;
+the other supported core still needs its own complete product result. Keep the
+normal baseline results separate from the faults' expected failures.
+Each worker builds a pristine copy once. A worker then applies one fault at a time,
 rebuilds incrementally, runs the fault's named cases once, and restores the file
 before the next. Mutation matches must have the exact declared count, restricted
 to the named function body where specified. A fault names one case, or a list
 when one edit is the designated check of several cases; it must build and be
 rejected by the `IQSFAIL` assertion of every named case. A fault that does not
 build, that survives, or that never ran fails the control.
+An empty expected-case list or one containing duplicate names is rejected before
+any builds. Every named case must run an assertion with its own evidence files;
+duplicates cannot overwrite an earlier result or inflate the case count.
 The rejection must be an entire `IQSFAIL case=NAME line=NUMBER: ...` line and
 exit 1. Timeouts, signals, other exit codes and failures from similarly named
 cases do not qualify, even if their output mentions the expected marker.
-Every worker must finish successfully too: a pristine-build failure or an exception (including its traceback)
-is a terminal failure even if other workers handle every fault. The top-level
-`results.json` records `baseline_passed`, `workers` and `mutations`. Each `worker-N/`
+Every worker must finish successfully too: a pristine-build failure or an exception
+(including its traceback) is a terminal failure even if other workers handle every
+fault. The top-level `results.json` records `baseline_passed`, the baseline identity,
+result/exception, elapsed seconds, `workers` and `mutations`. If every pristine
+build fails, baseline admission fails without leaving a blocked waiter. Each `worker-N/`
 retains its pristine executable's SHA-256, `.config`, `zephyr.dts`, `CMakeCache.txt`
-and build log/exit. Each successful incremental build records its executable's
-SHA-256 in the fault row; a hash equal to that worker's pristine hash is
-`STALE-BINARY`, fails the control and skips the fault's cases. Every result other
-than `REJECTED` retains the available executable in the fault directory, including
+and build log/exit. Each fault row records the pre-build executable's SHA-256 as
+`previous_binary_sha256`; a successful incremental build also records the resulting
+`binary_sha256`. A hash equal to either the worker's pristine hash or the pre-build
+hash is `STALE-BINARY`, fails the control and skips the fault's cases. A previous
+fault's failing executable therefore cannot establish rejection of the next fault.
+Every result other than `REJECTED` retains the available executable in the fault directory, including
 the old executable if a rebuild fails; failed incremental build logs are retained.
-Controls are reported apart from product results. Give the container about twice
-`--jobs` CPUs.
+Controls are reported apart from product results. Pristine builds use two compiler
+jobs for each worker. Set `CMAKE_BUILD_PARALLEL_LEVEL=2` to bound
+incremental builds, and cap the container's total CPU and memory for all workers
+and the baseline together. Staging, pristine build and every subprocess have
+separate timing JSON files; each fault records incremental-build, case and total
+seconds. Compare like image/input/cache conditions and keep preparation separate.
 Each case belongs to the catalogue only if no other case already establishes what
 it checks, and each fault only if no other fault makes the same edit or the same
 class of edit to the same statement.
-The runner admission controls are exercised separately in the prepared container:
+The runner admission controls are included in canonical host/CI tests; focus them in the prepared container with:
 `python3 -m unittest discover -s tests/kernel/events -p test_runner.py -v`.
+
+The transport model checks actual Zephyr message flags: one uninterrupted
+register-address fragment, followed by contiguous write data or a repeated-START
+read, then STOP. `IQSBUS` retains both flags, ACK/NACK result and raw tick time.
+`IQSRDY` retains every modelled level transition, its time and the driver's
+IRQ-armed state immediately before that edge. These observations join the
+three-repeat trace comparison. `read-missing-restart` and
+`write-address-stopped` must build and fail the named shape assertion; both
+survive without that check. Zephyr can add the final STOP itself, so removing
+that flag before `i2c_transfer()` is not a qualifying fault at this configuration.
+These are controller messages and emulated RDY, not physical START/STOP/IRQ traces.
+
+Silent-boot recovery additionally covers an accepted reset that the model ignores:
+the next command at least 200 ms later restores setup and clicks. Ignoring every
+accepted reset exhausts the same three-command budget and leaves a quiet bus.
+`boot-kick-success-not-retried` must fail both cases; `boot-kick-unbounded` must
+fail both the absent/NACKed and present/accepted-command limits.
 
 The sensor model follows IQS7211E datasheet v1.4 §§9.3.1, 10.2, 11.6–11.9 and
 Table A.7: STOP ends a session, Show Reset suppresses event mode until acknowledged,

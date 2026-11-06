@@ -142,11 +142,16 @@ static void dump_all(void) {
     }
     for (int s = 0; s < SENSOR_COUNT; s++) {
         const struct model *m = &models[s];
+        for (int i = 0; i < m->rdy_count; i++) {
+            const struct model_rdy_edge *edge = &m->rdy[i];
+            printk("IQSRDY s=%d level=%u irq_armed=%u ticks=%lld ms=%lld\n", s,
+                   !edge->low, edge->irq_armed, edge->ticks, k_ticks_to_ms_near64(edge->ticks));
+        }
         for (int i = 0; i < m->bus_count; i++) {
             const struct model_bus_op *op = &m->bus[i];
-            printk("IQSBUS s=%d %s reg=0x%02x len=%u b0=0x%02x b1=0x%02x nack=%d ticks=%lld ms=%lld\n", s,
-                   op->write ? "write" : "read", op->reg, op->len, op->b0, op->b1, op->nack,
-                   op->ticks, k_ticks_to_ms_near64(op->ticks));
+            printk("IQSBUS s=%d %s reg=0x%02x len=%u b0=0x%02x b1=0x%02x flags0=0x%02x flags1=0x%02x nack=%d ticks=%lld ms=%lld\n", s,
+                   op->write ? "write" : "read", op->reg, op->len, op->b0, op->b1,
+                   op->flags0, op->flags1, op->nack, op->ticks, k_ticks_to_ms_near64(op->ticks));
         }
     }
 }
@@ -461,6 +466,47 @@ static void boot_kick(enum model_power power) {
 }
 static void case_boot_silent_event_mode(void) { boot_kick(MODEL_RETAINED_EVENT); }
 static void case_boot_silent_suspended(void) { boot_kick(MODEL_RETAINED_SUSPENDED); }
+
+/* An accepted write need not mean that a silent part acted on the reset. */
+static void case_boot_silent_reset_lost(void) {
+    struct model *m = &models[S_POINTER];
+    m->ignore_resets = 1;
+    model_power_on(m, MODEL_RETAINED_EVENT);
+    WAIT_UNTIL(m->resets_seen == 2, 550);
+    const struct model_bus_op *first = nth_op(m, MODEL_REG_SYS_CONTROL, true, 0);
+    const struct model_bus_op *second = nth_op(m, MODEL_REG_SYS_CONTROL, true, 1);
+    CHECK(second->ticks - first->ticks >= k_ms_to_ticks_ceil64(200));
+    CHECK(second->ticks - first->ticks <= k_ms_to_ticks_ceil64(205));
+    wait_ready(m);
+    check_setup_sequence(m, 2);
+    check_programmed(m);
+    CHECK(m->resets_seen == 2);
+    tap(m, TAP_SINGLE);
+    k_sleep(K_MSEC(CLICKS_DONE_MS));
+    EXPECT(S_POINTER, W_CLICK(0));
+    finish();
+}
+
+/* Three accepted but ignored commands exhaust recovery without a busy loop. */
+static void case_boot_silent_reset_exhausted(void) {
+    struct model *m = &models[S_POINTER];
+    m->ignore_resets = 10;
+    model_power_on(m, MODEL_RETAINED_EVENT);
+    k_sleep(K_MSEC(900));
+    CHECK(m->resets_seen == 3 && m->bus_count == 3);
+    CHECK(driver_data(m)->boot_kick_attempts == 3);
+    CHECK(atomic_get(&driver_data(m)->boot_irq_seen) == 0);
+    CHECK(!k_work_delayable_is_pending(&driver_data(m)->boot_kick_work));
+    for (int i = 0; i < 3; i++) {
+        const struct model_bus_op *op = &m->bus[i];
+        const int64_t ms = k_ticks_to_ms_near64(op->ticks);
+        CHECK(op->write && !op->nack && op->reg == MODEL_REG_SYS_CONTROL);
+        CHECK(op->len == 2 && op->b0 == 0 && op->b1 == MODEL_SW_RESET);
+        CHECK(ms >= 200 * (i + 1) && ms <= 205 * (i + 1));
+    }
+    EXPECT_NONE(S_POINTER);
+    finish();
+}
 
 /* No part at all: three bounded attempts, then quiet. */
 static void case_boot_absent(void) {
@@ -1356,6 +1402,8 @@ static const struct {
     CASE(boot_fresh),
     CASE(boot_silent_event_mode),
     CASE(boot_silent_suspended),
+    CASE(boot_silent_reset_lost),
+    CASE(boot_silent_reset_exhausted),
     CASE(boot_absent),
     CASE(boot_wrong_product),
     CASE(boot_bus_errors),

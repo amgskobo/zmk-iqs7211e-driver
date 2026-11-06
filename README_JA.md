@@ -40,6 +40,10 @@ DTS が `<(-1)>` を表す32ビットの cell だけを、8ビットの格納前
 有効なボタン番号と、クリックの press/release の順序は変わりません。
 実際の DTS を通す[範囲検査](tests/README.md#raw-tap-cell-compile-boundary)で、両方の対応 core を確認します。
 
+この番号は入力イベントのコードを選ぶもので、HIDのボタン数を保証するものではありません。
+owner testで固定しているstock ZMKとDYAのlistenerは、`BTN_0`〜`BTN_4`だけをmouse buttonへ直接対応付けます。
+それより大きい番号は下流でのremapまたは別のconsumerが必要です。DTS cellの受理だけではHID clickの成立を確認できません。
+
 ### 2.1 絶対座標レポートモード
 
 デフォルトでは、このドライバーは相対座標 (`INPUT_REL_X`, `INPUT_REL_Y`) を報告します。デバイスツリーで `report-abs;` を設定すると、絶対座標 (`INPUT_ABS_X`, `INPUT_ABS_Y`) に切り替わります。
@@ -49,6 +53,10 @@ DTS が `<(-1)>` を表す32ビットの cell だけを、8ビットの格納前
 直接の相対座標モードでは `INPUT_BTN_TOUCH` を報告しません。ZMK はこのコードを mouse button 0 として扱うため、報告するとパッドへ触れている間の移動がすべて左ドラッグになるためです。絶対座標モードでは、絶対座標processorがcontactの開始と終了を判定できるよう `INPUT_BTN_TOUCH` を報告します。純粋なabsolute-to-relative converterは元のボタンイベントを維持します。ZMKのmouse出力へ届く前にアプリケーションのボタン方針を適用してください。たとえば、同じ独立した [`zmk-input-suppress`](https://github.com/amgskobo/zmk-input-suppress) instanceを全listener経路の末尾へ配置し、各経路のmaskに `SUPPRESS_TOUCH` を含めます。tap gestureによる通常の `INPUT_BTN_*` clickは両モードで維持され、その経路のボタンmaskに従います。
 
 絶対モードと相対モードは、設定可能なラバーバンドdeadbandと3サンプル中央値から成る同じ座標フィルターを使います。一時的な無効座標は直前の出力を保持し、フィルター履歴も進めません。平滑化はチップ内MAVとDynamic IIRに任せ、ホスト側でIIRを重ねません。すべてのフィルター状態は接触開始ごとに初期化されます。
+
+診断比較では `CONFIG_IQS7211E_FILTER_BYPASS=y` により、ホスト側のdeadband・中央値フィルター・相対deltaの平均処理を、全デバイスの両報告モードで無効化できます。
+既定値は `n` です。回転、無効座標の扱い、接触・ジェスチャーの報告、センサー内のMAV・Dynamic IIR、報告間隔は維持します。
+電極の生データを出す設定ではなく、ポインターのノイズが増える場合があります。
 
 フィルター設定はビルド時のDevice Treeプロパティです。bindingが既定値を定義し、選択値を読み取り専用のdevice configへ格納し、接触ごとに変化するフィルター状態はdevice dataへ分離します。driver既定値は`jitter-deadband = 8`です。絶対・相対座標へ分岐する前に同じ処理を適用し、別の値が必要なboardだけoverlayで上書きします。
 
@@ -85,6 +93,15 @@ DTS が `<(-1)>` を表す32ビットの cell だけを、8ビットの格納前
 ```sh
 bash tests/run-host-docker.sh
 ```
+
+`main` へのpushとPRのCIでは、ホスト側の全動作ケースをASan・UBSan付きで実行します。
+定期・手動CIのfullでは、最適化・gcov構成も実行し、フィルターと抽出したドライバー全関数の行・分岐カバレッジを100%要求します。
+接触・クリック・後始末は故障注入する入力スタブで、初期化の状態機械、バス処理、RDY割り込みと復旧、touch verify、PMはセンサーのワード単位のメモリマップモデルとドライバー自身のヘッダーで確認します。
+ドライバー関数とハーネスは別々に計測します。
+これらのホストハーネスでは、Zephyrのスケジューリング、実バスの時刻、センサーのジェスチャー判定は検証しません。
+別の[カーネルイベントテスト](tests/README.md#kernel-event-fixture)では、ドライバー全体を、実際のカーネルキュー・PM・ZMK listenerとセンサーモデルで動かします。
+これは別途実行するローカル検証で、ホスト入口のquick・fullには含まれません。
+このモジュールのCIはファームウェアfixtureをビルドしないため、リリース前にはローカルモジュールを指定したキーボード全体の構成もビルドします。
 
 ## 3. インストール (GitHub Actions)
 
@@ -182,6 +199,14 @@ manifest:
 
 ### 3.3 Kconfig でドライバーを有効にする
 
+上のoverlayは `nordic,nrf-twi` を明示的に選択しています。ボードが `nordic,nrf-twim` を使う場合は、
+同じI2C controllerへ `zephyr,concat-buf-size = <32>;` と `zephyr,flash-buf-max-size = <32>;` を設定します。
+最大の設定書き込みはregisterの1バイトとdataの30バイトを連結します。
+固定したTWIM backendの既定バッファ16バイトでは足りず `-ENOSPC` になるため、共有bus上の他デバイスにも必要な容量を確保してください。
+TWIはこのTWIM用バッファを使用しません。
+転送待ち時間を有限に保つ場合は `CONFIG_I2C_NRFX_TRANSFER_TIMEOUT` を正の値にします。
+固定したTWI/TWIM backendでは `0` が `K_FOREVER` を意味します。
+
 `board.conf` にドライバーを追加します：
 
 ```kconfig
@@ -200,13 +225,26 @@ device PM がセンサーを wake する時点で I2C bus がまだ利用でき�
 
 device PM が GPIO controller より先に driver を resume した場合は、同じ work が RDY interrupt の再設定も繰り返します。RDY level が inactive でも、interrupt の有効化が実際に成功するまでは復旧完了とみなしません。そのため deep sleep 復帰後の最初の touch を待てる状態を維持します。
 
-センサーは SoC だけを再起動する操作(リセットボタン、ファームウェア更新、watchdog、System OFF からの復帰)では電源が切れず、それまでの状態を保ったままです。つまり touch でしか RDY を出さない event mode か、ZMK のアイドルスリープが入れた suspend(この経路は init 順の逆にデバイスを suspend するので、書き込み時点で I2C bus はまだ動いています)で、後者では RDY を一切出しません。セットアップは最初の RDY から始まるため、ドライバーは RDY を待ちません。起動後 200 ms たってもセンサーから何も来なければ、通信を強制してセンサーをリセットします(残っていた suspend もこれで解除されます)。リセット自身の RDY で、ATI を含むセットアップが起動時に走ります。最初の touch に任せると ATI がその指の下で走り、そこで取った基準値は離れない接触を報告し続けます。suspend されたセンサーなら、電源を抜くまでパッドは反応しません。電源投入直後のセンサーは 200 ms より十分早く自分で RDY を出すので、何もしません。
+ボードがセンサーへの電源を保ったままSoCだけを再起動すると、センサーは直前の状態を保持する場合があります。
+リセットボタン、ファームウェア更新、watchdog、System OFFからの復帰でこの状態になるかは、ボードの電源配線によります。
+保持される状態は、touchでしかRDYを出さないevent modeや、ZMKのアイドルスリープで設定したsuspendです。
+後者ではRDYを一切出しません。起動後200 msたってもセンサーから何も来なければ、ドライバーは通信を強制してセンサーをリセットし、残っていたsuspendも解除します。
+リセット自身のRDYで、ATIを含むセットアップを起動時に実行します。最初のtouchまで待つと、その指の下でATIが走り、接触が残る原因になります。
+起動タイマーの期限までに自らRDYを出すセンサーには、この復旧リセットを行いません。
+
+I2C書き込みの成功は配送の確認であり、センサーがリセットを実行した保証ではありません。
+無応答が続く場合は200 ms間隔で再試行し、成功・失敗を合わせて最大3コマンドに制限します。
+RDY edgeまたはセットアップの進行があれば、この起動時再試行を終了します。
+上限到達後もIRQとlevel recheckの経路は有効なため、後から応答を始めたセンサーの初期化を受け付けられます。
 
 センサーは ZMK の 2 つの電源オフ経路のどちらでも休止させます。センサー自身のデバイスは init 順で I2C bus より後にあり、アイドルスリープの逆順 suspend ではそれで正しく動きますが、init 順に suspend する `&soft_off` では、センサーの番が来たときには bus が止まっています。そのためセンサーは、キーボードがオフの間ずっと動作時の電流で動き続けていました。bus より前に置いた小さなデバイス(`CONFIG_IQS7211E_PM_EARLY_INIT_PRIORITY`、45)がこの経路で同じ suspend を先に実行し、センサー自身の番では休止済みなのを確認して、bus のタイムアウトを待つ書き込みを省きます。
 
 通常の device PM 復帰では、完了済みのセットアップを保持します。suspend でセンサーの設定は残るため、次の指で再びソフトウェアリセット・ATI を始めません。センサー自身の復帰時 reseed はそのままで、実際の `Show Reset` は従来どおり再初期化します。初期化途中で休止した場合は、無応答センサーの復旧タイマーと試行状態を開始し直します。[データシート10.2節](https://www.azoteq.com/images/stories/pdf/iqs7211e_datasheet.pdf)を参照してください。
 
-suspend 開始時に割り込みの停止が失敗した場合も、割り込みを復旧して RDY のレベルを再確認します。driver 自身の作業キューからの suspend は、状態変更前に `-EWOULDBLOCK` を返します。callback は別スレッドへ要求を渡してください。通常の PM 呼び出しでは従来どおり処理と解除を待ちます。作業キュー優先度は Zephyr の設定範囲をビルド時に検査し、cooperative priority がない構成での既定値は0です。
+suspend開始時に割り込みの停止が失敗した場合も、割り込みを復旧してRDYのレベルを再確認します。
+ドライバー自身の作業キューからのsuspendと、`CONFIG_INPUT_MODE_THREAD=y` の場合にZephyrのinput consumer threadから行うsuspendは、状態変更前に `-EWOULDBLOCK` を返します。
+どちらのスレッド上のcallbackも、workの取消とinput queueの消費を完了できるよう、別スレッドへ要求を渡してください。
+通常のPM呼び出しでは従来どおり処理と解除を待ちます。作業キュー優先度はZephyrの設定範囲をビルド時に検査し、cooperative priorityがない構成での既定値は0です。
 
 通常は次の production 既定値のままで使用します。
 
@@ -222,11 +260,10 @@ GitHub Actions のワークフローが自動的にファームウェアをビ�
 
 ### 3.5 ZMK Studio
 
-ZMK Studio のレイヤー並べ替えを含めてサポートします。ドライバーの
-DeviceTree プロパティは、Studio で表示される順番ではなく、並べ替え後も
-変わらない keymap layer ID を使います。トラックパッドと input processor
-chain の設定は firmware 側に保持し、通常キーの binding を Studio 側で変更
-します。具体的な keymap、GitHub Actions、確認手順は
+ドライバーは通常のZMK inputを報告し、keymap layerを参照しません。
+レイヤーの並べ替えや安定したlayer IDの扱いは、下流のinput processorが担当します。
+トラックパッドとinput processor chainの設定はfirmware側に保持し、通常キーのbindingをStudio側で変更します。
+具体的なkeymap、GitHub Actions、確認手順は
 [ZMK Studio で IQS7211E ドライバーを使う](docs/zmk-studio.md) を参照してください。
 
 ## 4. ハードウェアと寸法
@@ -360,20 +397,10 @@ AZD128 6.4の基準は、両軸で座標0と最大解像度へ到達できるこ
 
 ### 5.5 変更時の確認項目
 
-push/PR の CI は全ホストシナリオを ASan/UBSan 版で実行します。定期・手動の full 実行は最適化版と gcov 版も保持し、
-`iqs7211e_filter.c` と `iqs7211e.c` の全関数に行・分岐カバレッジ 100% を要求します。
-関数は 2 つのハーネスに取り出します。接触・クリック・後始末の関数は故障注入する入力スタブで、
-初期化の状態機械、バス処理、RDY 割り込みと復旧、タッチ検証、電源管理はセンサーの
-メモリマップ(ワード単位)のモデルと driver 自身のヘッダーで確認します。driver 関数と
-ハーネスは別々に計測します。Zephyr のスケジューリング、実際のバスのタイミング、
-センサーのジェスチャー判定は模擬しません。
-このモジュール単独の CI にはファームウェア統合ビルドがありません。公開前に
-ローカルモジュール指定で基板設定全体をビルドしてください。
-
 1. 中央へ軽く触れて静止し、contactが1回、途中releaseが0回、出力移動がほぼ0であること
 2. 軽いタップを反復し、contact数とrelease数が一致すること
 3. 低速直線、円、高速往復で、途中release、IRQ/work/reportの欠落、I2C errorが0であること
-4. `tests/run-host-docker.sh` が通り、絶対・相対のparityテストが成功すること
+4. ホストから `bash tests/run-host-docker.sh` を実行し、フィルターの絶対・相対parityテストとruntimeの報告検証が成功すること
 5. 最終ファームウェアのFLASH/RAMを変更前と比較すること
 
 ### 5.6 参照箇所
@@ -390,10 +417,11 @@ bash tests/run-host-docker.sh
 ZMK_TEST_MODE=full bash tests/run-host-docker.sh
 ```
 
-通常実行は全動作シナリオをASan/UBSanで確認し、fullでは維持しているカバレッジと
+通常実行はホスト側の全動作シナリオをASan/UBSanで確認し、fullでは維持しているホスト側のカバレッジと
 ABI構成を追加します。[モジュールのテストガイド](tests/README.md)に、変更していない
-stock ZMKとDYAのAPI・DTSのtap範囲・kernel/PM検査、新しい出力先、依存の準備、
-失敗対照を記載しています。センサー、I2C、USB/BLE、実時間の挙動や消費電力は
+stock ZMKとDYAのAPI・DTSのtap範囲・kernel/PM・カーネルイベント検査、新しい出力先、依存の準備、
+失敗対照を記載しています。これらのファームウェア検証は別の入口で実行し、ホスト入口のquick・fullには含まれません。
+センサー、I2C、USB/BLE、実時間の挙動や消費電力は
 別途実機で確認してください。
 
 時刻・周期の集計、定期的なFLOWカウンター、stack high-waterの収集は廃止済みで、

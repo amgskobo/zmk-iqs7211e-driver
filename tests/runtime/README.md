@@ -1,9 +1,13 @@
 Runtime regression tests
 ========================
 
-Run `bash tests/run-host-docker.sh` for the CI-equivalent filter and runtime
-tests, or `python3 tests/runtime/run.py` with a native C compiler available as
-`cc` for this suite alone.
+Run `bash tests/run-host-docker.sh` from the host for the canonical host tests,
+including retirement/admission controls, filter cases and both runtime harnesses.
+Use `ZMK_TEST_MODE=full` with that wrapper for retained optimization, coverage and
+ABI variants. For this suite alone, run `python3 tests/runtime/run.py` from the
+owner root inside a prepared Docker container with a native C compiler available
+as `cc`. That focused entry does not run the other host stages or the separate
+kernel event fixture described in [the test guide](../README.md).
 The runner extracts the actual cleanup, report and click-worker
 functions from `src/iqs7211e.c` and compiles them with fault-injecting input and
 sensor stubs. It links the real coordinate filter implementation.
@@ -35,8 +39,9 @@ failures, the RDY interrupt, the level recheck and its back-off, touch
 verification, click queueing, both suspend paths and resume.
 
 The gcov report attributes the lifted functions to their original driver
-lines, separately from the harnesses. CI requires 100% line and branch
-coverage of every function in `iqs7211e.c`.
+lines, separately from the harnesses. Full mode requires 100% line and branch
+coverage of every function in `iqs7211e.c`; quick CI runs the behavioral scenarios
+with sanitizers and does not produce that coverage measurement.
 
 The named PM regressions in the driver harness retain completed sensor setup on
 normal resume, restart silent-sensor recovery for interrupted setup, recover RDY

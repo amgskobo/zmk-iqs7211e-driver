@@ -3,13 +3,16 @@
 / { keymap { compatible = "zmk,keymap"; default_layer { bindings = <&kp A &kp B &kp C &kp D &kp E &kp F &kp G &kp H &kp I &kp J &kp K>; }; }; };
 &i2c0 {
     status = "okay";
+    /* TWIM joins the register byte and up to 30 settings bytes. */
+    zephyr,concat-buf-size = <32>;
+    zephyr,flash-buf-max-size = <32>;
     pinctrl-0 = <&i2c0_default>;
     pinctrl-1 = <&i2c0_sleep>;
     pinctrl-names = "default", "sleep";
     sensor: trackpad@56 {
         compatible = "azoteq,iqs7211e";
         reg = <0x56>;
-        irq-gpios = <&gpio0 6 GPIO_ACTIVE_HIGH>;
+        irq-gpios = <&gpio0 6 GPIO_ACTIVE_LOW>;
         report-abs;
         rotate-cw = <3>;
         jitter-deadband = <8>;

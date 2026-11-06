@@ -88,7 +88,11 @@ static int scheduled, release_attempts, presses, fail_key, fail_abs, fail_rel, f
 static int fail_schedule;
 static struct k_work_delayable *last_scheduled;
 static int last_delay;
+static struct k_work_delayable *scheduled_work[16];
+static int scheduled_delay[16];
 static int iqs7211e_reschedule_work(struct k_work_delayable *w, int ms) {
+    scheduled_work[scheduled % 16] = w;
+    scheduled_delay[scheduled % 16] = ms;
     last_scheduled = w; last_delay = ms; scheduled++;
     if (fail_schedule) { fail_schedule--; return -5; }
     return 0;
@@ -161,7 +165,7 @@ static void iqs7211e_queue_clicks(struct iqs7211e_data *d, uint16_t button, uint
 
 /*
  * A sensor that kept its power through the SoC's reset raises no RDY: the boot
- * kick resets it once, retries a failed write a bounded number of times, and
+ * kick retries silence after either an accepted or failed write within one budget, and
  * leaves alone a part that has spoken or a driver that has moved on.
  */
 static void test_boot_kick(const struct device *dev) {
@@ -174,11 +178,20 @@ static void test_boot_kick(const struct device *dev) {
      */
     writes = 0; scheduled = 0; irq_armed = true; rearms = 0;
     iqs7211e_boot_kick_work_handler(&d.boot_kick_work.work);
-    assert(writes == 1 && scheduled == 1);
+    assert(writes == 1 && scheduled == 2 && d.boot_kick_attempts == 1);
     assert(last_reg == IQS7211E_MM_SYS_CONTROL);
     assert(last_write[0] == 0x00 && last_write[1] == (1 << IQS7211E_SW_RESET_BIT));
     assert(!irq_armed && rearms == 0);
+    assert(scheduled_work[0] == &d.rdy_recheck_work &&
+           scheduled_delay[0] == IQS7211E_BOOT_KICK_SETTLE_MS);
+    assert(last_scheduled == &d.boot_kick_work && last_delay == IQS7211E_BOOT_KICK_RETRY_MS);
+    /* A delivered reset with no RDY is retried, but all writes share the limit. */
+    iqs7211e_boot_kick_work_handler(&d.boot_kick_work.work);
+    iqs7211e_boot_kick_work_handler(&d.boot_kick_work.work);
+    assert(writes == 3 && scheduled == 5 && d.boot_kick_attempts == 3);
     assert(last_scheduled == &d.rdy_recheck_work && last_delay == IQS7211E_BOOT_KICK_SETTLE_MS);
+    iqs7211e_boot_kick_work_handler(&d.boot_kick_work.work);
+    assert(writes == 3 && scheduled == 5);
 
     /* An RDY edge since init: the part is talking, nothing is written. */
     d = (struct iqs7211e_data){.dev = dev, .init_state = IQS7211E_INIT_VERIFY_PRODUCT,
@@ -211,13 +224,16 @@ static void test_boot_kick(const struct device *dev) {
     assert(last_scheduled == &d.boot_kick_work);
     assert(rearms == IQS7211E_BOOT_KICK_ATTEMPTS);
 
-    /* A write that succeeds on a retry is not repeated. */
+    /* A failed write followed by success shares the budget; RDY ends retries. */
     d = (struct iqs7211e_data){.dev = dev, .init_state = IQS7211E_INIT_VERIFY_PRODUCT};
     writes = 0; scheduled = 0; fail_write = 1;
     iqs7211e_boot_kick_work_handler(&d.boot_kick_work.work);
     iqs7211e_boot_kick_work_handler(&d.boot_kick_work.work);
-    assert(writes == 2 && scheduled == 2 && fail_write == 0);
-    assert(last_scheduled == &d.rdy_recheck_work && !irq_armed);
+    assert(writes == 2 && scheduled == 3 && fail_write == 0);
+    assert(d.boot_kick_attempts == 2 && last_scheduled == &d.boot_kick_work && !irq_armed);
+    d.boot_irq_seen = 1;
+    iqs7211e_boot_kick_work_handler(&d.boot_kick_work.work);
+    assert(writes == 2 && scheduled == 3);
 }
 
 static void test_report_modes(struct iqs7211e_config *config, const struct device *dev) {

@@ -61,6 +61,8 @@ struct model_bus_op {
     uint8_t len;
     uint8_t b0;
     uint8_t b1;
+    uint8_t flags0;
+    uint8_t flags1;
     bool write;
     bool nack;
 };
@@ -70,6 +72,12 @@ struct model_frame {
     uint8_t fingers;
     uint16_t x;
     uint16_t y;
+};
+
+struct model_rdy_edge {
+    int64_t ticks;
+    bool low;
+    bool irq_armed;
 };
 
 struct model {
@@ -122,9 +130,20 @@ struct model {
 
     struct model_bus_op bus[MODEL_BUS_LOG];
     int bus_count;
+    struct model_rdy_edge rdy[MODEL_BUS_LOG];
+    int rdy_count;
 };
 
 static void model_set_rdy(struct model *m, bool low) {
+    if (m->rdy_low != low) {
+        if (m->rdy_count == MODEL_BUS_LOG) {
+            fail(__LINE__, "RDY log overflow");
+        }
+        const struct iqs7211e_data *data = m->dev->data;
+        m->rdy[m->rdy_count++] = (struct model_rdy_edge){
+            .ticks = k_uptime_ticks(), .low = low,
+            .irq_armed = atomic_get(&data->irq_enabled) != 0};
+    }
     m->rdy_low = low;
     const int ret = gpio_emul_input_set(m->port, m->pin, low ? 0 : 1);
     if (ret != 0) {
@@ -290,13 +309,21 @@ static int model_i2c_transfer(const struct emul *target, struct i2c_msg *msgs, i
     struct model *m = target->data;
 
     ARG_UNUSED(addr);
-    if (num_msgs != 2 || msgs[0].len != 1 || (msgs[0].flags & I2C_MSG_READ) != 0) {
-        printk("IQSFAIL unexpected I2C shape: msgs=%d\n", num_msgs);
-        exit(1);
+    if (num_msgs != 2 || msgs[0].len != 1 || msgs[1].len == 0 ||
+        msgs[1].len > UINT8_MAX) {
+        fail(__LINE__, "unexpected I2C message count or length");
     }
 
     const uint8_t reg = msgs[0].buf[0];
     const bool write = (msgs[1].flags & I2C_MSG_READ) == 0;
+    /* Pinned Zephyr burst helpers: one register-address fragment, then
+     * contiguous write data or a repeated-START read, terminated by STOP.
+     * Inspect the actual controller messages, including Zephyr's final STOP. */
+    const uint8_t expected = I2C_MSG_STOP |
+        (write ? I2C_MSG_WRITE : I2C_MSG_RESTART | I2C_MSG_READ);
+    if (msgs[0].flags != I2C_MSG_WRITE || msgs[1].flags != expected) {
+        fail(__LINE__, "invalid I2C START/RESTART/STOP sequence");
+    }
     const uint8_t len = (uint8_t)msgs[1].len;
     uint8_t *buf = msgs[1].buf;
     bool nack = m->bus_down || !m->present;
@@ -318,6 +345,7 @@ static int model_i2c_transfer(const struct emul *target, struct i2c_msg *msgs, i
     {
         m->bus[m->bus_count++] = (struct model_bus_op){
             .ticks = k_uptime_ticks(), .reg = reg, .len = len, .write = write, .nack = nack,
+            .flags0 = msgs[0].flags, .flags1 = msgs[1].flags,
             .b0 = write && len > 0 ? buf[0] : 0, .b1 = write && len > 1 ? buf[1] : 0};
     }
     if (nack) {

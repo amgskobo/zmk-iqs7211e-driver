@@ -5,6 +5,8 @@
     "boot_fresh": "Fresh part: every settings block once and in order, then ACK, ATI and event mode; tap gestures and resolution programmed; no forced reset; no reports; gesture/trackpad event sources on, Comms End Cmd off, ATI completion actually read",
     "boot_silent_event_mode": "Part that kept power in event mode: forced reset at 200 ms with the exact command, then full setup; a tap reports afterwards",
     "boot_silent_suspended": "Part that kept power suspended: the forced reset wakes it and setup completes",
+    "boot_silent_reset_lost": "Silent retained event mode ignores the first accepted reset command: another forced reset at least 200 ms later completes setup, and a subsequent tap works",
+    "boot_silent_reset_exhausted": "Silent retained event mode accepts but ignores every reset: exactly three commands at 200-ms intervals, no pending boot retry, no reports and quiet bus afterwards",
     "boot_absent": "No part: three forced resets at least 200 ms apart, then the bus stays quiet",
     "boot_wrong_product": "Another product: one read, device disabled, bus left alone while RDY keeps streaming",
     "boot_bus_errors": "Failed product reads retry through the RDY level; a failed settings block restarts the settings",

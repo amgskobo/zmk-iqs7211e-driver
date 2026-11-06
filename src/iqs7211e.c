@@ -415,7 +415,8 @@ static void iqs7211e_boot_kick_work_handler(struct k_work *work)
      */
     if (atomic_get(&data->suspended) ||
         atomic_get(&data->boot_irq_seen) != 0 ||
-        data->init_state != IQS7211E_INIT_VERIFY_PRODUCT)
+        data->init_state != IQS7211E_INIT_VERIFY_PRODUCT ||
+        data->boot_kick_attempts >= IQS7211E_BOOT_KICK_ATTEMPTS)
     {
         return;
     }
@@ -433,6 +434,7 @@ static void iqs7211e_boot_kick_work_handler(struct k_work *work)
                                 SYSTEM_CONTROL_1 | (1 << IQS7211E_SW_RESET_BIT)};
     int ret = iqs7211e_write_bytes(&config->i2c, IQS7211E_MM_SYS_CONTROL,
                                    command, sizeof(command));
+    data->boot_kick_attempts++;
     if (ret < 0)
     {
         /* Never leave the driver deaf: a part that wakes by itself must be heard. */
@@ -440,7 +442,7 @@ static void iqs7211e_boot_kick_work_handler(struct k_work *work)
         {
             LOG_ERR("Failed to restore IRQ after a failed forced reset");
         }
-        if (++data->boot_kick_attempts < IQS7211E_BOOT_KICK_ATTEMPTS)
+        if (data->boot_kick_attempts < IQS7211E_BOOT_KICK_ATTEMPTS)
         {
             iqs7211e_reschedule_work(&data->boot_kick_work,
                                      K_MSEC(IQS7211E_BOOT_KICK_RETRY_MS));
@@ -452,6 +454,13 @@ static void iqs7211e_boot_kick_work_handler(struct k_work *work)
 
     iqs7211e_reschedule_work(&data->rdy_recheck_work,
                              K_MSEC(IQS7211E_BOOT_KICK_SETTLE_MS));
+    /* An ACK confirms delivery, not that the part acted on the reset.
+     * Retry silence within the same budget; a reset's RDY stops this timer. */
+    if (data->boot_kick_attempts < IQS7211E_BOOT_KICK_ATTEMPTS)
+    {
+        iqs7211e_reschedule_work(&data->boot_kick_work,
+                                K_MSEC(IQS7211E_BOOT_KICK_RETRY_MS));
+    }
     LOG_INF("IQS7211E silent since boot - forced a reset to run setup");
 }
 

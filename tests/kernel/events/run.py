@@ -2,7 +2,7 @@
 # Copyright (c) 2026 amgskobo
 # SPDX-License-Identifier: MIT
 """Driver events on the real kernel against a modelled sensor; no physical acceptance."""
-import argparse, difflib, hashlib, json, os, queue, re, shutil, subprocess, tempfile, threading, traceback
+import argparse, difflib, hashlib, json, os, queue, re, shutil, subprocess, tempfile, threading, time, traceback
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -11,7 +11,7 @@ BUILD_EXTRA = ('-DCONFIG_SYS_CLOCK_TICKS_PER_SEC=32768',)
 VARIANT = 'ticks-32768'
 REPEATS = 3
 CASE_TIMEOUT = 60
-TRACE_LINE = re.compile(rb'^IQS(?:TRACE|HID|BUS) .*$', re.M)
+TRACE_LINE = re.compile(rb'^IQS(?:TRACE|HID|BUS|RDY) .*$', re.M)
 SOURCES = ('src', 'tests/kernel/events', 'Kconfig', 'dts', 'CMakeLists.txt',
            'zephyr', 'tests/integration/dependencies.json')
 # What a mutation build needs from the owner tree.
@@ -74,8 +74,12 @@ def configure(root, workspace, dependencies, modules, folder, log_path):
                Zephyr_DIR=dependencies['zephyr']['path']+'/share/zephyr-package/cmake')
     log_path.with_name(log_path.stem+'-command.json').write_text(
         json.dumps({'command': command, 'cwd': str(workspace)}, indent=2))
+    started = time.monotonic()
     with log_path.open('wb') as log:
-        return subprocess.run(command, cwd=workspace, env=env, stdout=log, stderr=subprocess.STDOUT).returncode
+        code = subprocess.run(command, cwd=workspace, env=env, stdout=log, stderr=subprocess.STDOUT).returncode
+    log_path.with_name(log_path.stem+'-time.json').write_text(
+        json.dumps(dict(seconds=time.monotonic()-started, exit=code), indent=2))
+    return code
 
 
 def build(root, workspace, dependencies, modules, out):
@@ -97,11 +101,15 @@ def build(root, workspace, dependencies, modules, out):
 
 def run_case(binary, case, stem):
     env = dict(os.environ, IQS_KERNEL_CASE=case)
+    started_ns = time.time_ns()
+    started = time.monotonic()
     try:
         result = subprocess.run([str(binary)], env=env, capture_output=True, timeout=CASE_TIMEOUT)
         code, stdout, stderr = result.returncode, result.stdout, result.stderr
     except subprocess.TimeoutExpired as error:
         code, stdout, stderr = 124, error.stdout or b'', error.stderr or b''
+    Path(str(stem)+'.time.json').write_text(json.dumps(dict(
+        start_unix_ns=started_ns, seconds=time.monotonic()-started, exit=code), indent=2))
     Path(str(stem)+'.stdout').write_bytes(stdout)
     Path(str(stem)+'.stderr').write_bytes(stderr)
     Path(str(stem)+'.exit').write_text(str(code))
@@ -118,14 +126,18 @@ def listed_cases(binary, out):
 def run_variant(binary, cases, out):
     """Every case REPEATS times on one binary; each must pass with one identical trace."""
     rows = []
-    for case in cases:
+    for case in dict.fromkeys(cases):
         traces = set()
         passed = True
         for repeat in range(1, REPEATS+1):
             code, stdout = run_case(binary, case, out/f'{case}-{repeat}')
-            valid = code == 0 and ('IQS kernel EVENTS PASS case='+case+'\n').encode() in stdout
-            traces.add(tuple(TRACE_LINE.findall(stdout)))
-            rows.append(dict(case=case, repeat=repeat, exit=code, pass_verified=valid))
+            trace = tuple(TRACE_LINE.findall(stdout))
+            completions = stdout.splitlines().count(('IQS kernel EVENTS PASS case='+case).encode())
+            valid = (code == 0 and completions == 1 and bool(trace)
+                     and re.search(rb'^IQSFAIL\b', stdout, re.M) is None)
+            traces.add(trace)
+            rows.append(dict(case=case, repeat=repeat, exit=code, pass_verified=valid,
+                             completion_count=completions, trace_lines=len(trace)))
             passed = passed and valid
         deterministic = len(traces) == 1
         status = 'PASS' if passed and deterministic else 'FAIL'
@@ -133,13 +145,18 @@ def run_variant(binary, cases, out):
         print(f'{out.name} {case}: {status}{note}', flush=True)
         rows.append(dict(case=case, identical_traces=deterministic))
     (out/'results.json').write_text(json.dumps(rows, indent=2))
-    return all(row.get('pass_verified', row.get('identical_traces')) for row in rows)
+    return bool(rows) and all(row.get('pass_verified', row.get('identical_traces')) for row in rows)
 
 
 def expected_cases(mutation):
     """One case name, or a list of them; every one must reject the fault."""
     cases = mutation['expect_case']
-    return [cases] if isinstance(cases, str) else list(cases)
+    names = [cases] if isinstance(cases, str) else list(cases)
+    if not names:
+        raise SystemExit('at least one expected case required: '+mutation.get('name', '<unnamed>'))
+    if len(names) != len(set(names)):
+        raise SystemExit('duplicate expected cases: '+mutation.get('name', '<unnamed>'))
+    return names
 
 
 def apply_mutation(stage, mutation):
@@ -179,7 +196,9 @@ def judge_mutation(stage, folder, mutation, target, pristine_hash):
     original = path.read_text()
     binary = folder/'zephyr/zmk.exe'
     row = dict(mutation=name, result='EXCEPTION')
+    started = time.monotonic()
     try:
+        row['previous_binary_sha256'] = hashlib.sha256(binary.read_bytes()).hexdigest()
         try:
             apply_mutation(stage, mutation)
         except SystemExit as error:
@@ -188,24 +207,28 @@ def judge_mutation(stage, folder, mutation, target, pristine_hash):
         (target/'mutation.diff').write_text(''.join(difflib.unified_diff(
             original.splitlines(True), path.read_text().splitlines(True),
             'a/'+mutation['file'], 'b/'+mutation['file'])))
+        build_started = time.monotonic()
         with (target/'build.log').open('wb') as log:
             code = subprocess.run(['cmake', '--build', str(folder)], stdout=log,
                                   stderr=subprocess.STDOUT).returncode
         (target/'build.exit').write_text(str(code))
+        row['build_seconds'] = time.monotonic() - build_started
         if code:
             row['result'] = 'BUILD-FAILED'
             return row
         row['binary_sha256'] = hashlib.sha256(binary.read_bytes()).hexdigest()
-        if row['binary_sha256'] == pristine_hash:
+        if row['binary_sha256'] in (pristine_hash, row['previous_binary_sha256']):
             row['result'] = 'STALE-BINARY'
             return row
         rows = []
+        cases_started = time.monotonic()
         for case in expected_cases(mutation):
             code, stdout = run_case(binary, case, target/case)
             assertion = re.compile(rb'^IQSFAIL case='+re.escape(case.encode())+rb' line=[0-9]+: .+$')
             first = next((line for line in stdout.splitlines() if assertion.fullmatch(line)), b'').decode()
             rows.append(dict(case=case, exit=code, rejected=code == 1 and bool(first), line=first))
         rejected = all(row['rejected'] for row in rows)
+        row['case_seconds'] = time.monotonic() - cases_started
         row.update(result='REJECTED' if rejected else 'SURVIVED', cases=rows)
         return row
     except BaseException:
@@ -218,10 +241,12 @@ def judge_mutation(stage, folder, mutation, target, pristine_hash):
                 shutil.copy2(binary, target/'zmk.exe')
         finally:
             path.write_text(original)
+            row['seconds'] = time.monotonic() - started
 
 
 def run_mutations(selected, jobs, workspace, dependencies, modules, out):
     """Each fault must build, and every named case must reject it by assertion."""
+    started = time.monotonic()
     mutations = json.loads((ROOT/'tests/kernel/events/mutations.json').read_text())['mutations']
     if selected:
         mutations = [m for m in mutations if m['name'] in selected]
@@ -230,6 +255,8 @@ def run_mutations(selected, jobs, workspace, dependencies, modules, out):
     names = [m['name'] for m in mutations]
     if len(names) != len(set(names)):
         raise SystemExit('duplicate mutation names')
+    if not mutations or jobs < 1:
+        raise SystemExit('at least one mutation and a positive job count required')
     required = sorted(json.loads((ROOT/'tests/kernel/events/cases.json').read_text())['cases'])
     for mutation in mutations:
         if not set(expected_cases(mutation)) <= set(required):
@@ -241,21 +268,34 @@ def run_mutations(selected, jobs, workspace, dependencies, modules, out):
     results = {}
     lock = threading.Lock()
     baseline_ok = []
-    worker_statuses = [None] * max(1, jobs)
+    baseline_details = dict(result='NOT-RUN')
+    baseline_ready = threading.Event()
+    worker_statuses = [None] * min(jobs, len(mutations))
 
     def baseline():
-        # Concurrent admission: each named oracle must also pass unchanged.
+        # Execute an immutable copy of the first successful pristine worker.
+        # The worker can mutate its own executable while this copy runs.
+        baseline_ready.wait()
         target = out/'baseline'
-        binary = build(ROOT, workspace, dependencies, modules, target)
-        if binary is None:
-            baseline_ok.append(False)
-            return
-        if sorted(case.decode() for case in listed_cases(binary, target)) != required:
-            baseline_ok.append(False)
-            print('baseline: the fixture and cases.json name different cases', flush=True)
-            return
-        cases = sorted({case for m in mutations for case in expected_cases(m)})
-        baseline_ok.append(run_variant(binary, cases, target))
+        began = time.monotonic()
+        try:
+            if baseline_details['result'] != 'READY':
+                baseline_ok.append(False)
+                return
+            binary = target/'zmk.exe'
+            if sorted(case.decode() for case in listed_cases(binary, target)) != required:
+                baseline_details.update(result='CASE-LIST-MISMATCH')
+                baseline_ok.append(False)
+                print('baseline: the fixture and cases.json name different cases', flush=True)
+                return
+            cases = sorted({case for m in mutations for case in expected_cases(m)})
+            passed = run_variant(binary, cases, target)
+            baseline_ok.append(passed)
+            baseline_details.update(result='PASS' if passed else 'FAIL')
+        except BaseException:
+            baseline_details.update(result='EXCEPTION', traceback=traceback.format_exc())
+        finally:
+            baseline_details['seconds'] = time.monotonic() - began
 
     def worker(index):
         status = dict(worker=index, result='SUCCESS')
@@ -265,7 +305,10 @@ def run_mutations(selected, jobs, workspace, dependencies, modules, out):
             with tempfile.TemporaryDirectory(prefix=f'iqs-mutation-{index}-') as temp:
                 stage = Path(temp)/'owner'
                 folder = Path(temp)/'build'
+                stage_started = time.monotonic()
                 stage_owner(stage)
+                (evidence/'stage-time.json').write_text(json.dumps(dict(
+                    seconds=time.monotonic()-stage_started), indent=2))
                 code = configure(stage, workspace, dependencies, modules, folder, evidence/'build.log')
                 (evidence/'build.exit').write_text(str(code))
                 if code:
@@ -279,6 +322,27 @@ def run_mutations(selected, jobs, workspace, dependencies, modules, out):
                                      (folder/'zephyr/zephyr.dts', 'zephyr.dts'),
                                      (folder/'CMakeCache.txt', 'CMakeCache.txt')):
                     shutil.copy2(source, evidence/name)
+                with lock:
+                    if not baseline_ready.is_set():
+                        try:
+                            target = out/'baseline'
+                            target.mkdir()
+                            for source, name in ((folder/'zephyr/zmk.exe', 'zmk.exe'),
+                                                 (evidence/'.config', 'config'),
+                                                 (evidence/'zephyr.dts', 'zephyr.dts'),
+                                                 (evidence/'CMakeCache.txt', 'CMakeCache.txt')):
+                                shutil.copy2(source, target/name)
+                            for name in ('build.log', 'build.exit', 'build-command.json', 'build-time.json'):
+                                if (evidence/name).is_file():
+                                    shutil.copy2(evidence/name, target/name)
+                            (target/'binary.sha256').write_text(pristine_hash)
+                            baseline_details.update(result='READY', source_worker=index,
+                                                    binary_sha256=pristine_hash)
+                        except BaseException:
+                            baseline_details.update(result='EXCEPTION', traceback=traceback.format_exc())
+                            raise
+                        finally:
+                            baseline_ready.set()
                 while True:
                     try:
                         mutation = pending.get_nowait()
@@ -301,9 +365,11 @@ def run_mutations(selected, jobs, workspace, dependencies, modules, out):
         finally:
             with lock:
                 worker_statuses[index] = status
+                if all(status is not None for status in worker_statuses):
+                    baseline_ready.set()  # No successful build must not leave a waiter blocked.
 
     threads = [threading.Thread(target=baseline)]
-    threads += [threading.Thread(target=worker, args=(i,)) for i in range(max(1, jobs))]
+    threads += [threading.Thread(target=worker, args=(i,)) for i in range(len(worker_statuses))]
     for thread in threads:
         thread.start()
     for thread in threads:
@@ -311,7 +377,9 @@ def run_mutations(selected, jobs, workspace, dependencies, modules, out):
 
     rows = [results.get(name, dict(mutation=name, result='NOT-RUN')) for name in names]
     (out/'results.json').write_text(json.dumps(dict(
-        baseline_passed=baseline_ok == [True], workers=worker_statuses, mutations=rows), indent=2))
+        baseline_passed=baseline_ok == [True], baseline=baseline_details,
+        workers=worker_statuses, mutations=rows,
+        seconds=time.monotonic() - started), indent=2))
     counts = {}
     for row in rows:
         counts[row['result']] = counts.get(row['result'], 0) + 1

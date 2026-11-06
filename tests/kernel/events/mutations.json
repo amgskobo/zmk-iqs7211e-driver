@@ -3,6 +3,28 @@
   "contract": "Each fault must build, and its named case must reject it with an IQSFAIL assertion. Run with --negative-control mutations; results are reported separately from product results.",
   "mutations": [
     {
+      "name": "boot-kick-success-not-retried",
+      "file": "src/iqs7211e.c",
+      "within": "static void iqs7211e_boot_kick_work_handler(struct k_work *work)\n{",
+      "before": "if (data->boot_kick_attempts < IQS7211E_BOOT_KICK_ATTEMPTS)\n    {\n        iqs7211e_reschedule_work(&data->boot_kick_work,\n                                K_MSEC(IQS7211E_BOOT_KICK_RETRY_MS));\n    }",
+      "after": "",
+      "expect_case": ["boot_silent_reset_lost", "boot_silent_reset_exhausted"]
+    },
+    {
+      "name": "read-missing-restart",
+      "file": "src/iqs7211e.c",
+      "before": "int ret = i2c_burst_read_dt(i2c, reg, data, len);",
+      "after": "uint8_t address = reg;\n    struct i2c_msg messages[] = {\n        {.buf = &address, .len = 1, .flags = I2C_MSG_WRITE},\n        {.buf = data, .len = len, .flags = I2C_MSG_READ | I2C_MSG_STOP},\n    };\n    int ret = i2c_transfer_dt(i2c, messages, 2);",
+      "expect_case": "boot_fresh"
+    },
+    {
+      "name": "write-address-stopped",
+      "file": "src/iqs7211e.c",
+      "before": "int ret = i2c_burst_write_dt(i2c, reg, data, len);",
+      "after": "uint8_t address = reg;\n    struct i2c_msg messages[] = {\n        {.buf = &address, .len = 1, .flags = I2C_MSG_WRITE | I2C_MSG_STOP},\n        {.buf = (uint8_t *)data, .len = len, .flags = I2C_MSG_WRITE | I2C_MSG_STOP},\n    };\n    int ret = i2c_transfer_dt(i2c, messages, 2);",
+      "expect_case": "boot_fresh"
+    },
+    {
       "name": "triple-two-clicks",
       "file": "src/iqs7211e.c",
       "count": 2,
@@ -269,7 +291,7 @@
       "file": "src/iqs7211e.c",
       "before": "#define IQS7211E_BOOT_KICK_ATTEMPTS 3",
       "after": "#define IQS7211E_BOOT_KICK_ATTEMPTS 5",
-      "expect_case": "boot_absent"
+      "expect_case": ["boot_absent", "boot_silent_reset_exhausted"]
     },
     {
       "name": "wrong-product-accepted",

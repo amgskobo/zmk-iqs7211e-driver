@@ -43,6 +43,11 @@ This keeps all valid button mappings and deferred click ordering unchanged.
 See the [raw DTS compile boundary tests](tests/README.md#raw-tap-cell-compile-boundary)
 for both supported cores.
 
+These indices select input-event codes, not a guaranteed number of HID buttons.
+The pinned stock ZMK and DYA listeners used by the owner tests directly map only
+`BTN_0` through `BTN_4` to mouse buttons. Higher indices need downstream remapping
+or another consumer; accepting a DTS cell alone does not establish a HID click.
+
 ### 2.1 Absolute Pointer Report Mode
 
 By default, this driver reports relative coordinates (`INPUT_REL_X`, `INPUT_REL_Y`). By setting `report-abs;` in the Device Tree, it will switch to absolute coordinates (`INPUT_ABS_X`, `INPUT_ABS_Y`).
@@ -117,15 +122,19 @@ expected relative delta independently from the absolute filtered coordinate stre
 bash tests/run-host-docker.sh
 ```
 
-Push/PR CI runs every host scenario under ASan/UBSan. Scheduled/manual full
-runs also retain optimized and gcov variants, requiring 100% line and branch coverage of `iqs7211e_filter.c` and of every function in
+CI runs every host scenario under ASan/UBSan for pushes to `main` and for pull
+requests. Scheduled/manual full runs also retain optimized and gcov variants,
+requiring 100% line and branch coverage of `iqs7211e_filter.c` and of every function in
 `iqs7211e.c`, lifted into two harnesses: the contact, click and cleanup
 functions against fault-injecting input stubs, and the setup state machine,
 bus helpers, RDY interrupt and recovery, touch verification and power
 management against a word-addressed model of the sensor's memory map, built
 with the driver's own header. The driver lines are measured separately from
-the harnesses. Zephyr's scheduling, the real bus timing and the sensor's
-gesture engine are not simulated.
+the harnesses. These host harnesses do not exercise Zephyr scheduling, real bus
+timing or the sensor's gesture engine. The separate
+[kernel event fixture](tests/README.md#kernel-event-fixture) runs the complete
+driver with real kernel queues, PM and the ZMK listener against a sensor model.
+It is a separate local gate; the host wrapper does not run it in either mode.
 This module CI does not build a firmware fixture; compile the full board
 configuration with the local module override before release.
 
@@ -228,6 +237,15 @@ Add the IQS7211E node in your keyboard DTS overlay file:
 
 ### 3.3 Enable Driver in Kconfig
 
+The overlay above explicitly selects `nordic,nrf-twi`. If the board instead
+uses `nordic,nrf-twim`, set `zephyr,concat-buf-size = <32>;` and
+`zephyr,flash-buf-max-size = <32>;` on that I2C controller. The largest settings
+write joins one register byte and 30 data bytes. The pinned TWIM backend's
+default 16-byte buffer is insufficient and returns `-ENOSPC`; keep enough space
+for other devices sharing the bus too. TWI does not use this TWIM buffer.
+Keep `CONFIG_I2C_NRFX_TRANSFER_TIMEOUT` positive when bounded transfer waits are
+required; `0` selects `K_FOREVER` in the pinned TWI/TWIM backends.
+
 Add the driver to your `board.conf`:
 
 ```kconfig
@@ -255,9 +273,10 @@ also retries arming the RDY interrupt. An inactive RDY level is not considered
 recovered until the interrupt has actually been enabled, so the first touch
 after deep sleep cannot be left without an event source.
 
-The sensor keeps its power through everything that restarts only the SoC -
-the reset button, a firmware update, the watchdog, and a wake from System OFF -
-and with it whatever state it was in. That is event mode, where it raises RDY
+When a board keeps the sensor powered while only the SoC restarts, the sensor
+can retain its previous state. Depending on the board's power wiring, this can
+happen after a reset button, firmware update, watchdog reset or wake from
+System OFF. The retained state can be event mode, where it raises RDY
 only for a touch, or the suspend that ZMK's idle sleep put it in (that path
 suspends devices in reverse init order, so the bus is still up), where it never
 raises RDY at all. Setup starts at the first RDY, so the driver does not wait
@@ -266,8 +285,14 @@ communication window and resets the sensor, which also clears a leftover
 suspend. The reset's own RDY then runs setup, ATI included, at boot. Left to
 the first touch, the ATI would run under that finger, and the reference taken
 there reports a contact that never lifts; a suspended sensor would leave the
-pad dead until its power was removed. A freshly powered sensor raises RDY by
-itself well within the 200 ms and is left alone.
+pad dead until its power was removed. A freshly powered sensor that raises RDY
+before that deadline is left alone.
+
+A successful I2C write confirms delivery, not that the sensor acted on the reset.
+While it remains silent, retry at 200-ms intervals within one limit of three
+commands, counting accepted and failed writes together. Any RDY edge or setup
+progress ends these boot retries. Exhaustion leaves the IRQ/recheck path armed
+so a sensor that later starts responding can still initialize.
 
 The sensor is put to sleep on both of ZMK's power-off paths. The sensor's own
 device comes after the I2C bus in init order, which is right for idle sleep's
@@ -286,9 +311,11 @@ retry state. See [datasheet section 10.2](https://www.azoteq.com/images/stories/
 
 If the first interrupt mask fails during suspend, the driver restores the
 interrupt and schedules a level recheck to recover an edge seen while suspended.
-Suspend requested from the driver's own queue returns `-EWOULDBLOCK` before
-changing state: callbacks must defer that request to another thread rather than
-wait for their own completion. Ordinary PM callers retain synchronous draining.
+Suspend requested from the driver's own queue or, with
+`CONFIG_INPUT_MODE_THREAD=y`, from Zephyr's input consumer thread returns
+`-EWOULDBLOCK` before changing state. Callbacks on either thread must defer the
+request to another thread so work cancellation and input queue draining can
+complete. Ordinary PM callers retain synchronous draining.
 Runtime interrupt-arm failures keep the retry chain alive; failed device
 initialization still reports its error. The selected work-queue priority is checked against the configured Zephyr
 priority counts at build time; without cooperative priorities the default is 0.
@@ -492,7 +519,8 @@ end cannot be removed with it.
 2. Tap lightly and repeatedly: the numbers of contacts and releases match.
 3. Slow straight lines, circles and fast back-and-forth strokes: zero
    intermediate releases, no missing IRQ/work/report, and zero I2C errors.
-4. `tests/filter/run.sh` passes, including the absolute/relative parity test.
+4. Run `bash tests/run-host-docker.sh` from the host. It includes the filter
+   suite's absolute/relative parity test and the runtime report assertions.
 5. Compare the final firmware's FLASH/RAM with the previous build.
 
 ### 5.6 References
@@ -509,10 +537,11 @@ bash tests/run-host-docker.sh
 ZMK_TEST_MODE=full bash tests/run-host-docker.sh
 ```
 
-The default runs every behavior scenario under ASan/UBSan; full adds all
-retained coverage and ABI variants. The [module-owned test guide](tests/README.md)
-documents API, raw DTS tap-range and kernel/PM checks on unchanged stock ZMK
-and DYA, fresh output directories, dependency preparation and negative controls.
+The default runs every host behavior scenario under ASan/UBSan; full adds the
+retained host coverage and ABI variants. The [module-owned test guide](tests/README.md)
+documents separate API, raw DTS tap-range, kernel/PM and kernel event checks on
+unchanged stock ZMK and DYA, fresh output directories, dependency preparation
+and negative controls. Neither host mode invokes those separate firmware gates.
 These checks do not establish physical sensor, I2C, USB/BLE, timing or power
 acceptance.
 
