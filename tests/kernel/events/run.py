@@ -2,7 +2,7 @@
 # Copyright (c) 2026 amgskobo
 # SPDX-License-Identifier: MIT
 """Driver events on the real kernel against a modelled sensor; no physical acceptance."""
-import argparse, difflib, hashlib, json, os, queue, re, shutil, subprocess, tempfile, threading, time, traceback
+import argparse, difflib, hashlib, json, os, queue, re, shutil, stat, subprocess, tempfile, threading, time, traceback
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -24,6 +24,60 @@ def reject_source_output(output, roots):
         source = Path(root).resolve()
         if output == source or source in output.parents:
             raise ValueError('output must be outside owner, workspace and selected source roots')
+
+
+def working_tree_files(root, ancestors=(), *, git_inventory=True):
+    """Fingerprint tracked and nonignored untracked inputs, including local overrides."""
+    resolved = root.resolve()
+    if resolved in ancestors:
+        raise ValueError('cyclic dependency directory: '+str(root))
+    if git_inventory:
+        try:
+            listing = subprocess.check_output(['git', '-C', str(root), 'ls-files',
+                                               '--cached', '--others', '--exclude-standard', '-z'],
+                                              stderr=subprocess.PIPE,
+                                              env=dict(os.environ, LC_ALL='C'))
+        except subprocess.CalledProcessError as error:
+            if error.returncode != 128 or not (error.stderr or b'').startswith(b'fatal: not a git repository '):
+                if error.stderr:
+                    os.write(2, error.stderr)
+                raise
+            # A directory link can point to local source without any Git index.
+            git_inventory = False
+        else:
+            names = set(listing.split(b'\0')) - {b''}
+            # In an uninitialized gitlink Git finds the parent repository and lists
+            # the gitlink itself as './'. Its local contents have no own Git index.
+            if names & {b'.', b'./'}:
+                git_inventory = False
+    if not git_inventory:
+        names = {os.fsencode(path.name) for path in root.iterdir() if path.name != '.git'}
+    files = {}
+    for name in sorted(names):
+        relative = os.fsdecode(name)
+        path = root/relative
+        entry = {}
+        if path.is_symlink():
+            entry['link'] = os.readlink(path)
+        try:
+            info = path.stat()
+        except FileNotFoundError:
+            entry['missing'] = True
+        else:
+            if stat.S_ISDIR(info.st_mode):
+                # Gitlinks and directory links have their own Git file inventory.
+                entry['files'] = working_tree_files(path, (*ancestors, resolved),
+                                                    git_inventory=git_inventory)
+            elif stat.S_ISREG(info.st_mode):
+                digest = hashlib.sha256()
+                with path.open('rb') as source:
+                    for chunk in iter(lambda: source.read(1024*1024), b''):
+                        digest.update(chunk)
+                entry.update(sha256=digest.hexdigest(), mode=stat.S_IMODE(info.st_mode))
+            else:
+                raise ValueError('unsupported dependency input: '+str(path))
+        files[relative] = entry
+    return files
 
 
 def select_workspace(workspace, core, output=None):
@@ -50,7 +104,8 @@ def select_workspace(workspace, core, output=None):
                 modules.append(text)
                 rev = subprocess.check_output(['git', '-C', text, 'rev-parse', 'HEAD'], text=True).strip()
                 status = subprocess.check_output(['git', '-C', text, 'status', '--porcelain'], text=True)
-                dependencies['modules'][name] = {'path': text, 'revision': rev, 'status': status}
+                dependencies['modules'][name] = {'path': text, 'revision': rev, 'status': status,
+                                                 'files': working_tree_files(path)}
     return dependencies, modules
 
 

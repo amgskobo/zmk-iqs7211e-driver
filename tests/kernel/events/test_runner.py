@@ -388,7 +388,7 @@ class RunnerControls(unittest.TestCase):
 
 class OutputRoots(unittest.TestCase):
     @contextmanager
-    def fixture(self):
+    def fixture(self, *, core='dya'):
         """Drive main with synthetic inputs; no west, compiler or product binary."""
         with tempfile.TemporaryDirectory() as temp, ExitStack() as patches:
             base = Path(temp)
@@ -418,7 +418,7 @@ class OutputRoots(unittest.TestCase):
                     if command[3:] == ['status', '--porcelain']:
                         return ''
                     name = Path(command[2]).name
-                    return pins['dya' if name == 'zmk' else name]+'\n'
+                    return pins[core if name == 'zmk' else name]+'\n'
                 raise AssertionError(command)
 
             def build(root, workspace, dependencies, modules, target):
@@ -441,10 +441,12 @@ class OutputRoots(unittest.TestCase):
                        for p in sorted(root.rglob('*'))] if root.exists() else None
                 for name, root in roots.items()}
 
-    def invoke(self, roots, output):
+    def invoke(self, roots, output, *, core='dya', negative_control=False):
         from contextlib import redirect_stderr
-        argv = ['run.py', '--workspace', str(roots['workspace']), '--core', 'dya',
+        argv = ['run.py', '--workspace', str(roots['workspace']), '--core', core,
                 '--output', str(output)]
+        if negative_control:
+            argv += ['--negative-control', 'mutations']
         stderr = io.StringIO()
         with patch.object(sys, 'argv', argv), redirect_stderr(stderr):
             try:
@@ -529,6 +531,182 @@ class OutputRoots(unittest.TestCase):
                 self.assertEqual(self.snapshot(roots), before)
                 self.assertTrue((output/'source-after.json').is_file())
                 builder.assert_called_once()
+
+
+class DependencySources(unittest.TestCase):
+    @contextmanager
+    def invocation(self, change=None, *, core='dya', negative_control=False, directory_link=False):
+        """Run actual selection/final admission with controlled Git and build responses."""
+        real_check_output = runner.subprocess.check_output
+        with OutputRoots().fixture(core=core) as fixture:
+            base, roots, projects, commands, builder = fixture
+            module = roots['hal']
+            (module/'zephyr').mkdir()
+            (module/'zephyr/module.yml').write_text('name: synthetic-hal\n')
+            (module/'driver.c').write_text('working override A\n')
+            (module/'local header.h').write_text('untracked override A\n')
+            external = base/'external.h'
+            external.write_text('linked override A\n')
+            (module/'link.h').symlink_to(external)
+            (module/'submodule').mkdir()
+            (module/'submodule/child.c').write_text('nested override A\n')
+            (module/'ignored-cache').write_text('generated cache A\n')
+            # Git supplies the inventory, including a deleted tracked file and
+            # a gitlink. NUL separation preserves spaces and newlines in names.
+            names = ['sentinel', 'zephyr/module.yml', 'driver.c', 'local header.h',
+                     'link.h', 'deleted.h', 'submodule']
+            (module/'line\nbreak.h').write_text('untracked newline A\n')
+            names.append('line\nbreak.h')
+            dirty_status = ' M driver.c\n?? local header.h\n?? link.h\n'
+            if directory_link:
+                headers = base/'plain-headers'
+                headers.mkdir()
+                (headers/'api.h').write_bytes(b'linked directory override A\n')
+                (module/'headers').symlink_to(headers, target_is_directory=True)
+                names.append('headers')
+                dirty_status += '?? headers\n'
+            original_command = commands.side_effect
+
+            def check_output(command, **kwargs):
+                if command[:3] == ['git', '-C', str(module)]:
+                    if command[3:] == ['rev-parse', 'HEAD']:
+                        return 'd'*40+'\n'
+                    if command[3:] == ['status', '--porcelain']:
+                        return dirty_status
+                    if command[3:] == ['ls-files', '--cached', '--others', '--exclude-standard', '-z']:
+                        return b'\0'.join(name.encode() for name in names)+b'\0'
+                    raise AssertionError(command)
+                if command == ['git', '-C', str(module/'submodule'), 'ls-files',
+                               '--cached', '--others', '--exclude-standard', '-z']:
+                    return b'child.c\0'
+                if directory_link and command[:3] == ['git', '-C', str(module/'headers')]:
+                    # Use real Git for a directory outside every work tree.
+                    return real_check_output(command, **kwargs)
+                return original_command(command, **kwargs)
+
+            def observe(*args):
+                if change is not None:
+                    change(module, external)
+                return True
+
+            commands.side_effect = check_output
+            with patch.object(runner, 'run_variant', side_effect=observe) as product, \
+                 patch.object(runner, 'run_mutations', side_effect=observe) as mutations:
+                out = base/'results'
+                code, stderr = OutputRoots().invoke(roots, out, core=core,
+                                                    negative_control=negative_control)
+                self.assertEqual(product.call_count, int(not negative_control))
+                self.assertEqual(mutations.call_count, int(negative_control))
+                yield code, stderr, out, module, dirty_status
+
+    def test_changed_dependency_bytes_fail_even_when_git_status_is_identical(self):
+        def relink(module, external):
+            other = external.with_name('other.h')
+            other.write_bytes(external.read_bytes())
+            (module/'link.h').unlink()
+            (module/'link.h').symlink_to(other)
+
+        changes = {
+            'tracked': lambda module, external: (module/'driver.c').write_text('working override B\n'),
+            'untracked': lambda module, external: (module/'local header.h').write_text('untracked override B\n'),
+            'newline-name': lambda module, external: (module/'line\nbreak.h').write_text('untracked newline B\n'),
+            'linked-content': lambda module, external: external.write_text('linked override B\n'),
+            'link-target-same-bytes': relink,
+            'nested-module': lambda module, external: (module/'submodule/child.c').write_text('nested override B\n'),
+            'executable-mode': lambda module, external: (module/'driver.c').chmod(0o755),
+        }
+        for core in ('stock-zmk', 'dya'):
+            for negative in (False, True):
+                for name, change in changes.items():
+                    with self.subTest(core=core, negative=negative, change=name), \
+                         self.invocation(change, core=core, negative_control=negative) as result:
+                        code, stderr, out, module, status = result
+                        self.assertEqual(code, 1, 'dependency drift was accepted')
+                        before = json.loads((out/'dependencies.json').read_text())
+                        after = json.loads((out/'dependencies-after.json').read_text())
+                        self.assertEqual(before['modules']['hal']['status'], status)
+                        self.assertEqual(after['modules']['hal']['status'], status)
+                        self.assertNotEqual(before, after)
+
+    def test_unchanged_overrides_and_ignored_cache_changes_remain_accepted(self):
+        def generated_cache(module, external):
+            (module/'ignored-cache').write_text('generated cache B\n')
+
+        for core in ('stock-zmk', 'dya'):
+            for negative in (False, True):
+                for change in (None, generated_cache):
+                    with self.subTest(core=core, negative=negative, cache=change is not None), \
+                         self.invocation(change, core=core, negative_control=negative) as result:
+                        code, stderr, out, module, status = result
+                        self.assertEqual(code, 0, stderr)
+                        before = json.loads((out/'dependencies.json').read_text())
+                        after = json.loads((out/'dependencies-after.json').read_text())
+                        self.assertEqual(before, after)
+                        files = before['modules']['hal']['files']
+                        self.assertEqual(files['driver.c']['sha256'], hashlib.sha256(b'working override A\n').hexdigest())
+                        self.assertEqual(files['local header.h']['sha256'], hashlib.sha256(b'untracked override A\n').hexdigest())
+                        self.assertEqual(files['link.h']['link'], str(module.parent/'external.h'))
+                        self.assertEqual(files['deleted.h'], {'missing': True})
+                        self.assertIn('child.c', files['submodule']['files'])
+                        self.assertNotIn('ignored-cache', files)
+
+    def test_cyclic_directory_links_have_a_named_rejection(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root/'loop').symlink_to(root, target_is_directory=True)
+            with patch.object(runner.subprocess, 'check_output', return_value=b'loop\0'):
+                with self.assertRaisesRegex(ValueError, 'cyclic dependency directory'):
+                    runner.working_tree_files(root)
+
+    def test_plain_directory_links_are_accepted_and_drift_is_rejected(self):
+        def edit_header(module, external):
+            (module/'headers/api.h').write_bytes(b'linked directory override B\n')
+
+        for core in ('stock-zmk', 'dya'):
+            for negative in (False, True):
+                for change in (None, edit_header):
+                    with self.subTest(core=core, negative=negative, changed=change is not None):
+                        try:
+                            with self.invocation(change, core=core, negative_control=negative,
+                                                 directory_link=True) as result:
+                                code, stderr, out, module, status = result
+                                self.assertEqual(code, int(change is not None), stderr)
+                                before = json.loads((out/'dependencies.json').read_text())
+                                after = json.loads((out/'dependencies-after.json').read_text())
+                                self.assertEqual(before['modules']['hal']['status'], status)
+                                self.assertEqual(after['modules']['hal']['status'], status)
+                                files = before['modules']['hal']['files']['headers']['files']
+                                self.assertEqual(files['api.h']['sha256'],
+                                                 hashlib.sha256(b'linked directory override A\n').hexdigest())
+                                self.assertEqual(before == after, change is None)
+                        except runner.subprocess.CalledProcessError:
+                            self.fail('plain directory links must be accepted and fingerprinted')
+
+    def test_other_git_inventory_failures_remain_errors(self):
+        with tempfile.TemporaryDirectory() as temp:
+            for code, diagnostic in ((128, b'fatal: detected dubious ownership in repository'),
+                                     (128, b'fatal: bad index file'),
+                                     (128, b'fatal: bad index at /synthetic/not a git repository/index'),
+                                     (1, b'fatal: not a git repository')):
+                with self.subTest(code=code, diagnostic=diagnostic):
+                    error = runner.subprocess.CalledProcessError(code, ['git'], stderr=diagnostic)
+                    with patch.object(runner.subprocess, 'check_output', side_effect=error):
+                        with self.assertRaises(runner.subprocess.CalledProcessError):
+                            runner.working_tree_files(Path(temp))
+
+    def test_uninitialized_gitlinks_record_empty_and_local_override_trees(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            with patch.object(runner.subprocess, 'check_output', return_value=b'./\0') as git:
+                self.assertEqual(runner.working_tree_files(root), {})
+                (root/'local.h').write_bytes(b'local gitlink override\n')
+                (root/'nested').mkdir()
+                (root/'nested/driver.c').write_bytes(b'nested gitlink override\n')
+                files = runner.working_tree_files(root)
+                self.assertEqual(files['local.h']['sha256'], hashlib.sha256(b'local gitlink override\n').hexdigest())
+                self.assertEqual(files['nested']['files']['driver.c']['sha256'],
+                                 hashlib.sha256(b'nested gitlink override\n').hexdigest())
+                self.assertEqual(git.call_count, 2, 'a gitlink must not query its parent index recursively')
 
 
 if __name__ == '__main__':

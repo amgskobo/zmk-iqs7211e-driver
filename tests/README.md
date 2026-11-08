@@ -340,6 +340,19 @@ sensors during the 300-ms settle. Absent sensors may make only three boot attemp
 
 The entry retains case-list stdout/stderr/exit and checks both the owner identity
 and resolved dependency selection before and after execution.
+Each selected dependency module also records a Git file inventory: tracked files
+and nonignored untracked files have SHA-256 hashes and permission modes; deleted
+paths and symlink targets are retained, with linked file contents hashed too.
+Gitlinks and directory links are checked recursively; cycles are rejected.
+A linked directory without a Git index, or an uninitialized gitlink, records its
+local tree (empty or overridden) without Git metadata. Only Git's explicit
+not-a-repository rejection selects this fallback; other Git errors remain failures
+and retain their diagnostics.
+Unchanged local overrides remain supported, and ignored generated caches are excluded.
+Both product and mutation runs reject a changed inventory even when the commit
+and `git status --porcelain` output stay identical. The host admission controls
+exercise both core selections and both run paths with synthetic dependencies and
+builds; they establish input identity checks, not firmware acceptance.
 It normalizes the output path and rejects evidence inside the owner, workspace
 or any selected west project before creating directories, including parent aliases
 and uncloned project roots. External siblings and safe aliases remain supported;
