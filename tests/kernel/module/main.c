@@ -5,6 +5,7 @@
  * this fixture checks real queue cancellation and PM call context only. */
 #include <stdlib.h>
 #include <string.h>
+#include <zephyr/drivers/gpio/gpio_emul.h>
 #include "../../../src/iqs7211e.c"
 
 static struct iqs7211e_data state;
@@ -17,6 +18,92 @@ K_SEM_DEFINE(completed, 0, 1);
 static int pm_result;
 K_SEM_DEFINE(released, 0, 1);
 static unsigned release_count;
+static void request_suspend(struct k_work *work);
+K_SEM_DEFINE(cancel_entered, 0, 1);
+K_SEM_DEFINE(cancel_continue, 0, 1);
+K_SEM_DEFINE(suspend_requested, 0, 1);
+static unsigned cancel_exited;
+
+static void hold_for_cancel(struct k_work *work) {
+    ARG_UNUSED(work);
+    k_sem_give(&cancel_entered);
+    __ASSERT_NO_MSG(k_sem_take(&cancel_continue, K_FOREVER) == 0);
+    cancel_exited++;
+}
+
+static void suspend_external(void *a, void *b, void *c) {
+    ARG_UNUSED(a); ARG_UNUSED(b); ARG_UNUSED(c);
+    for (;;) {
+        __ASSERT_NO_MSG(k_sem_take(&suspend_requested, K_FOREVER) == 0);
+        pm_result = iqs7211e_pm_action(&sensor, PM_DEVICE_ACTION_SUSPEND);
+        k_sem_give(&completed);
+    }
+}
+K_THREAD_DEFINE(iqs_suspender, 2048, suspend_external, NULL, NULL, NULL,
+                K_LOWEST_APPLICATION_THREAD_PRIO, 0, 0);
+
+/* Every synchronous cancellation must finish before the next wait starts.
+ * Use real running handlers, not idle work or mocked cancellation results. */
+static void verify_running_cancellations(void) {
+    struct k_work_delayable *const delayed[] = {
+        &state.touch_verify_work, &state.rdy_recheck_work,
+        &state.boot_kick_work, NULL, &state.click_work,
+    };
+    const k_work_handler_t handlers[] = {
+        iqs7211e_touch_verify_work_handler, iqs7211e_rdy_recheck_work_handler,
+        iqs7211e_boot_kick_work_handler, NULL, request_suspend,
+    };
+    static struct k_work_sync fixture_sync;
+    __ASSERT_NO_MSG(gpio_emul_input_set(config.irq_gpio.port, config.irq_gpio.pin, 1) == 0);
+    for (unsigned i = 0; i < ARRAY_SIZE(delayed); ++i) {
+        /* Resume's inactive-level recheck must finish before reinitialization. */
+        k_work_cancel_delayable_sync(&state.rdy_recheck_work, &fixture_sync);
+        struct k_work *target;
+        if (delayed[i] != NULL) {
+            k_work_init_delayable(delayed[i], hold_for_cancel);
+            target = &delayed[i]->work;
+            __ASSERT_NO_MSG(iqs7211e_reschedule_work(delayed[i], K_NO_WAIT) >= 0);
+        } else {
+            k_work_init(&state.work, hold_for_cancel);
+            target = &state.work;
+            __ASSERT_NO_MSG(iqs7211e_submit_work(target) >= 0);
+        }
+        __ASSERT_NO_MSG(k_sem_take(&cancel_entered, K_SECONDS(1)) == 0);
+        state.init_state = IQS7211E_INIT_NONE; /* No physical bus in this fixture. */
+        state.sensor_resume_attempts = 4;
+        state.click_edges = 1;
+        state.click_button = INPUT_BTN_0;
+        k_sem_give(&suspend_requested);
+        const int64_t deadline = k_uptime_get() + 1000;
+        while (!(k_work_busy_get(target) & K_WORK_CANCELING) &&
+               k_uptime_get() < deadline) {
+            k_sleep(K_MSEC(1));
+        }
+        __ASSERT(k_work_busy_get(target) & K_WORK_CANCELING,
+                 "External PM must wait for the running cancellation");
+        __ASSERT(k_sem_count_get(&completed) == 0 && cancel_exited == i,
+                 "Suspend must not finish before its running handler returns");
+        if (delayed[i] == &state.rdy_recheck_work) {
+            __ASSERT(state.sensor_resume_attempts == 4,
+                     "Cancellation must retain worker-owned state until the handler returns");
+        }
+        k_sem_give(&cancel_continue);
+        __ASSERT_NO_MSG(k_sem_take(&completed, K_SECONDS(1)) == 0);
+        __ASSERT_NO_MSG(pm_result == 0 && cancel_exited == i + 1);
+        __ASSERT_NO_MSG(k_work_busy_get(target) == 0);
+        __ASSERT_NO_MSG(k_sem_take(&released, K_SECONDS(1)) == 0);
+        __ASSERT(state.click_edges == 0 && release_count == i + 1,
+                 "Each external suspend must finish exactly one owed release");
+        if (delayed[i] != NULL) {
+            k_work_init_delayable(delayed[i], handlers[i]);
+        } else {
+            k_work_init(&state.work, request_suspend);
+        }
+        /* Keep resume from starting sensor setup on the nonexistent bus. */
+        state.init_state = IQS7211E_INIT_DONE;
+        __ASSERT_NO_MSG(iqs7211e_pm_action(&sensor, PM_DEVICE_ACTION_RESUME) == 0);
+    }
+}
 
 static void input_pm_request(struct input_event *event, void *user_data) {
     ARG_UNUSED(user_data);
@@ -74,6 +161,11 @@ static void tests(void *a, void *b, void *c) {
     k_work_init_delayable(&state.rdy_recheck_work, iqs7211e_rdy_recheck_work_handler);
     k_work_init_delayable(&state.boot_kick_work, iqs7211e_boot_kick_work_handler);
     __ASSERT_NO_MSG(gpio_pin_configure_dt(&config.irq_gpio, GPIO_INPUT) == 0);
+    if (strcmp(which, "cancel") == 0) {
+        verify_running_cancellations();
+        printk("IQS kernel PM PASS case=cancel time=%lld\n", k_uptime_get());
+        exit(0);
+    }
     if (strcmp(which, "work") == 0) {
         __ASSERT_NO_MSG(iqs7211e_submit_work(&state.work) >= 0);
     } else if (strcmp(which, "click") == 0) {

@@ -12,7 +12,7 @@
 struct iqs7211e_axis_filter
 {
     uint16_t gated;
-    uint16_t median_prev_1;
+    /* gated already is the most recent median input. */
     uint16_t median_prev_2;
 };
 

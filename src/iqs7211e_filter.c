@@ -34,7 +34,6 @@ static uint16_t median3(uint16_t a, uint16_t b, uint16_t c)
 void iqs7211e_axis_filter_reset(struct iqs7211e_axis_filter *state, uint16_t sample)
 {
     state->gated = sample;
-    state->median_prev_1 = sample;
     state->median_prev_2 = sample;
 }
 
@@ -47,6 +46,7 @@ iqs7211e_axis_filter_apply(struct iqs7211e_axis_filter *state, uint16_t sample,
     iqs7211e_axis_filter_reset(state, sample);
     return (struct iqs7211e_axis_filter_result){.gated = sample, .filtered = sample};
 #else
+    const uint16_t previous_gated = state->gated;
     int32_t delta = (int32_t)sample - state->gated;
 
     if (delta > deadband)
@@ -60,11 +60,10 @@ iqs7211e_axis_filter_apply(struct iqs7211e_axis_filter *state, uint16_t sample,
 
     struct iqs7211e_axis_filter_result result = {
         .gated = state->gated,
-        .filtered = median3(state->gated, state->median_prev_1, state->median_prev_2),
+        .filtered = median3(state->gated, previous_gated, state->median_prev_2),
     };
 
-    state->median_prev_2 = state->median_prev_1;
-    state->median_prev_1 = state->gated;
+    state->median_prev_2 = previous_gated;
 
     return result;
 #endif

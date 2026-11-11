@@ -71,6 +71,11 @@ reset at the start of every contact, and a temporarily invalid coordinate holds 
 output without advancing the filter. The default deadband is 8; a board
 only needs an override when its measurements call for it.
 
+Each axis stores the latest gated coordinate and one older coordinate. The
+latest gated coordinate also serves as the most recent median input; the
+next update combines those two values with the new gated sample. This retains
+the full three-sample median without storing its newest history value twice.
+
 For controlled diagnostic comparisons, `CONFIG_IQS7211E_FILTER_BYPASS=y`
 disables the host deadband, median and relative-delta average for every device
 and both report modes. The default is `n`, preserving the existing production
@@ -330,6 +335,13 @@ CONFIG_IQS7211E_WORKQUEUE_PRIORITY=-1
 The former optional stack high-water collector has been retired. Queue stack
 size and priority remain explicit configuration values; physical stack margin
 requires separate board validation.
+
+When PM is enabled, each device keeps one shared storage area for its five
+sequential synchronous cancellation waits and a separate release-flush descriptor.
+Each cancellation returns before the next uses that storage; all asynchronous
+work items remain independent. PM-disabled devices allocate neither descriptor.
+The real-kernel PM fixture exercises every running cancellation before reuse;
+simultaneous PM actions on the same device are not a supported calling contract.
 
 ### 3.4 Build Firmware
 

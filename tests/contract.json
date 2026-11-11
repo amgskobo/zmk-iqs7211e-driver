@@ -11,7 +11,7 @@
     },
     {
       "fixture": "tests/filter/run.sh",
-      "asserts": "Filtered and bypass boundaries, coordinate continuity, immediate motion/reversal/stop, independence/reset and normal-filter negative control"
+      "asserts": "Filtered and bypass boundaries, coordinate continuity, immediate motion/reversal/stop, independence/reset and normal-filter negative control. test_oracle.c independently clamps an anchor to the sample's deadband interval and sorts an explicit three-value window across full panel sweeps/boundaries and65536 interleaved/reset uint16 samples; it uses no driver state fields. The duplicate newest median history value is replaced by gated at the same assertion boundaries, preserving every unique output/state assertion. lost-median-history must compile and reject exactly the filtered-window oracle assertion with exit1; other errors cannot qualify."
     },
     {
       "fixture": "tests/runtime/driver_harness.c",
@@ -56,8 +56,8 @@
   "kernel": {
     "entry": "python3 tests/kernel/run.py --workspace RESOLVED --core stock-zmk|dya --output FRESH",
     "fixture": "tests/kernel/module/main.c",
-    "asserts": "Actual ordinary/delayed work and full-queue input consumer reject synchronous PM with EWOULDBLOCK before side effects; subsequent external suspend/resume releases the owed button exactly once. Three cases x three identical-binary runs per core. Actual Zephyr conversion comparison at 7 positive rates over all 65536 uint16 waits; existing PM markers and behavior retained.",
-    "negative_control": "--negative-control invalid-priority requires named compile rejection; no runtime execution is reported as a passing control",
+    "asserts": "Actual ordinary/delayed work and full-queue input consumer reject synchronous PM with EWOULDBLOCK before side effects; subsequent external suspend/resume releases the owed button exactly once. A fourth cancel case holds each of five real running workers in turn while external PM blocks in synchronous cancellation, retaining RDY-owned state until its handler returns and delivering exactly one owed release before resume. Four cases x three identical-binary runs per core. Sequential cancellation sync descriptors may share per-instance storage only after each synchronous call returns; the release flush and asynchronous workers retain independent storage. No simultaneous same-device PM action support is claimed. Actual Zephyr conversion comparison at 7 positive rates over all 65536 uint16 waits; existing PM markers and behavior retained.",
+    "negative_control": "--negative-control invalid-priority requires named compile rejection; no runtime execution is reported as a passing control. --negative-control early-cancel-state inserts a retry-counter reset before cancellation in an isolated source copy: it must compile and reject all three cancel repeats with exit1 and the named worker-owned-state assertion, separately from product results; build failures, timeouts and unrelated assertions cannot qualify.",
     "limits": "Actual kernel cancellation with GPIO emulation; no physical bus, sensor or downstream transport evidence"
   },
   "timeout_conversion": "Two variable touch verification reservations use 32-bit divisions with exact ceiling over the full uint16 range, retaining the tick ABI, zero-disable behavior and all I2C/GPIO/PM/report policy. No retired instrumentation.",

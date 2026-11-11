@@ -10,7 +10,7 @@ def main():
     parser.add_argument('--workspace', required=True, type=Path)
     parser.add_argument('--core', required=True, choices=('stock-zmk', 'dya'))
     parser.add_argument('--output', required=True, type=Path)
-    parser.add_argument('--negative-control', choices=('invalid-priority',))
+    parser.add_argument('--negative-control', choices=('invalid-priority', 'early-cancel-state'))
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
     out = args.output
@@ -43,12 +43,30 @@ def main():
     (out/'source-before.json').write_text(json.dumps(before,indent=2))
     with tempfile.TemporaryDirectory(prefix='iqs-kernel-') as temp:
         build = Path(temp)/'build'
+        module = root/'tests/kernel/module'
+        if args.negative_control == 'early-cancel-state':
+            stage = Path(temp)/'control'
+            for name in ('src','tests/kernel'):
+                shutil.copytree(root/name,stage/name)
+            shutil.copy2(root/'Kconfig',stage/'Kconfig')
+            source = stage/'src/iqs7211e.c'
+            original = source.read_text()
+            needle = '        k_work_cancel_delayable_sync(&data->touch_verify_work,'
+            assert original.count(needle) == 1
+            changed = original.replace(needle,'        data->sensor_resume_attempts = 0;\n'+needle)
+            source.write_text(changed)
+            (out/'control.json').write_text(json.dumps(dict(
+                control=args.negative_control, file='src/iqs7211e.c',
+                original_sha256=hashlib.sha256(original.encode()).hexdigest(),
+                changed_sha256=hashlib.sha256(changed.encode()).hexdigest(),
+                expected_assertion='Cancellation must retain worker-owned state until the handler returns'),indent=2))
+            module = stage/'tests/kernel/module'
         command = ['west','build','-p=always','-o=-j2','-s',dependencies['zmk']['path']+'/app',
                    '-d',str(build),'-b','native_sim//zmk_test_mock','--',
                    '-DZMK_CONFIG='+str(root/'tests/kernel/config'),
                    '-DZEPHYR_MODULES='+';'.join(modules),
-                   '-DZMK_EXTRA_MODULES='+str(root/'tests/kernel/module')]
-        if args.negative_control:
+                   '-DZMK_EXTRA_MODULES='+str(module)]
+        if args.negative_control == 'invalid-priority':
             command += ['-DCONFIG_NUM_PREEMPT_PRIORITIES=15',
                         '-DCONFIG_IQS7211E_WORKQUEUE_PRIORITY=15']
         env = dict(os.environ,ZEPHYR_BASE=dependencies['zephyr']['path'],
@@ -57,7 +75,7 @@ def main():
         with (out/'build.log').open('wb') as log:
             result = subprocess.run(command,cwd=workspace,env=env,stdout=log,stderr=subprocess.STDOUT)
         (out/'build.exit').write_text(str(result.returncode))
-        if args.negative_control:
+        if args.negative_control == 'invalid-priority':
             valid = result.returncode != 0 and 'IQS work queue priority must fit configured Zephyr priorities' in (out/'build.log').read_text()
             (out/'negative-control.json').write_text(json.dumps(dict(control=args.negative_control,build_exit=result.returncode,expected_failure_verified=valid),indent=2))
             if (build/'zephyr/.config').is_file(): shutil.copy2(build/'zephyr/.config',out/'config')
@@ -72,7 +90,8 @@ def main():
     binary = out/'zmk.exe'
     (out/'binary.sha256').write_text(hashlib.sha256(binary.read_bytes()).hexdigest())
     rows = []
-    for case in ('work','click','input'):
+    cases = ('cancel',) if args.negative_control == 'early-cancel-state' else ('work','click','input','cancel')
+    for case in cases:
         for repeat in (1,2,3):
             env = dict(os.environ,IQS_KERNEL_CASE=case)
             try:
@@ -84,8 +103,15 @@ def main():
             (out/(stem+'.stdout')).write_bytes(stdout)
             (out/(stem+'.stderr')).write_bytes(stderr)
             (out/(stem+'.exit')).write_text(str(code))
-            valid = code == 0 and ('IQS kernel PM PASS case='+case).encode() in stdout
-            rows.append(dict(case=case,repeat=repeat,exit=code,pass_verified=valid))
+            if args.negative_control == 'early-cancel-state':
+                observation = stdout + stderr
+                valid = (code == 1 and
+                         b'ASSERTION FAIL [state.sensor_resume_attempts == 4]' in observation and
+                         b'\n\tCancellation must retain worker-owned state until the handler returns\n' in observation)
+            else:
+                valid = code == 0 and ('IQS kernel PM PASS case='+case).encode() in stdout
+            rows.append(dict(case=case,repeat=repeat,exit=code,pass_verified=valid,
+                             result_kind='expected-runtime-rejection' if args.negative_control else 'product'))
             print(stem,code,'PASS' if valid else 'FAIL',flush=True)
     after = identity()
     (out/'source-after.json').write_text(json.dumps(after,indent=2))

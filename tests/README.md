@@ -51,6 +51,18 @@ suite also covers both modes, reset/independence/boundaries and an actual negati
 control that rejects the normal filter using the bypass expectations. Full mode
 retains each mode's line/branch coverage gates. Board acceptance remains separate.
 
+`filter/test_oracle.c` independently projects an anchor onto each sample's
+deadband interval and sorts an explicit three-value window. It checks both
+report-filter modes over full panel sweeps, boundary/deadband values and 65536
+deterministic uint16 samples interleaved across independent/reset streams.
+It does not inspect the driver's state fields. The latest gated value also
+holds the newest median history input, so each axis needs two persistent words
+while retaining all three median samples. Existing reset/parity/permutation
+assertions for the removed duplicate `median_prev_1` map to `gated` at those
+same call boundaries; all coordinate, delta, independence and oldest-history
+assertions remain. The `lost-median-history` control must compile and exit 1
+at the oracle's exact filtered-window assertion; other errors cannot qualify.
+
 Each fixture keeps its existing normal, boundary/invalid, independent-state,
 reset/cancellation and failure/recovery scenarios where applicable. Checks
 assert ordered outputs and explicit time inputs. Coverage is a full-mode gate,
@@ -128,6 +140,16 @@ work, delivering the retained release exactly once. All three cases run three
 times with the same binary. A premature exit 0 or
 timeout is a failure unless the named completion marker and exit 0 both match.
 
+A fourth `cancel` case holds each of the five actual cancellable work items
+while an external thread suspends the sensor. It observes the kernel's
+cancelling state, requires PM to wait, preserves the RDY worker's owned retry
+state until its handler returns, and finishes exactly one owed click release
+before each resume. All five waits run sequentially on each of three repeats
+of the same binary. The five cancellation descriptors share per-device storage:
+Zephyr retains each only until its synchronous call returns. The release flush
+keeps separate storage, and every asynchronous work item remains independent.
+This does not establish support for simultaneous PM actions on the same device.
+
 ```bash
 python3 tests/kernel/run.py --workspace /resolved/stock --core stock-zmk \
   --output /fresh/kernel-stock
@@ -135,6 +157,8 @@ python3 tests/kernel/run.py --workspace /resolved/dya --core dya \
   --output /fresh/kernel-dya
 python3 tests/kernel/run.py --workspace /resolved/dya --core dya \
   --output /fresh/invalid-priority --negative-control invalid-priority
+python3 tests/kernel/run.py --workspace /resolved/dya --core dya \
+  --output /fresh/early-cancel-state --negative-control early-cancel-state
 ```
 
 The explicit negative control sets the queue priority to 15 with 15 preemptive
@@ -142,6 +166,11 @@ priorities (legal priorities 0..14) and requires the named compile-time rejectio
 It must fail before the guard exists. These entries use the same pinned clean
 core/Zephyr selection as the interface fixture, do not fetch dependencies, and
 save commands, config, binary hash, source identities and raw ordered repeats.
+The separate `early-cancel-state` runtime control inserts a retry-counter reset
+before the cancellation waits in an isolated source copy. It must build and
+fail the named worker-owned-state assertion with exit 1 in all three `cancel`
+repeats. Build failures and timeouts cannot qualify. Report this expected
+rejection separately from the unchanged product's four-case results.
 This is a work-cancellation check, not I2C, RDY electrical timing or sensor
 reseed validation. Those still require actual board evidence.
 

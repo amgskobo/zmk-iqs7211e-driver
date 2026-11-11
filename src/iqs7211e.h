@@ -130,17 +130,22 @@ struct iqs7211e_data
     const struct device *dev;
     struct gpio_callback gpio_cb;
     struct k_work work;
-    /* Group aligned work storage without sharing any synchronization lifetime. */
+    /* Each producer retains its own asynchronous work lifetime. */
     struct k_work_delayable click_work;
     struct k_work_delayable touch_verify_work;
     struct k_work_delayable rdy_recheck_work;
     struct k_work_delayable boot_kick_work;
-    struct k_work_sync click_work_sync;
-    struct k_work_sync touch_verify_work_sync;
-    struct k_work_sync rdy_recheck_work_sync;
-    struct k_work_sync boot_kick_work_sync;
-    struct k_work_sync work_sync;
 #ifdef CONFIG_PM_DEVICE
+    /* Suspend waits for each cancellation to return before starting the next.
+     * Zephyr retains a cancel sync only until that synchronous call returns.
+     * Keep the release flush below separate from these cancellation waits. */
+    union {
+        struct k_work_sync click_work_sync;
+        struct k_work_sync touch_verify_work_sync;
+        struct k_work_sync rdy_recheck_work_sync;
+        struct k_work_sync boot_kick_work_sync;
+        struct k_work_sync work_sync;
+    };
     struct k_work pm_release_work;
     struct k_work_sync pm_release_work_sync;
     int pm_release_ret;

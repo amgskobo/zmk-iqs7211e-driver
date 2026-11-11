@@ -19,7 +19,7 @@ int main(void)
         struct iqs7211e_axis_filter_result r =
             iqs7211e_axis_filter_apply(&x, samples[i], 8);
         CHECK(r.gated == samples[i] && r.filtered == samples[i]);
-        CHECK(y.gated == 900 && y.median_prev_1 == 900 && y.median_prev_2 == 900);
+        CHECK(y.gated == 900 && y.median_prev_2 == 900);
     }
     iqs7211e_axis_filter_reset(&x, 700);
     CHECK(iqs7211e_axis_filter_apply(&x, 701, 1024).filtered == 701);

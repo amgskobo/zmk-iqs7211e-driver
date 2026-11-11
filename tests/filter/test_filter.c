@@ -28,7 +28,6 @@ static void test_reset_and_deadband(void)
     iqs7211e_axis_filter_reset(&state, 500);
 
     CHECK(state.gated == 500);
-    CHECK(state.median_prev_1 == 500);
     CHECK(state.median_prev_2 == 500);
 
     for (uint16_t sample = 501; sample <= 508; sample++)
@@ -188,7 +187,6 @@ static void test_absolute_relative_parity(void)
         CHECK(absolute.filter_updated == frames[i].expected_filter_update);
         CHECK(relative.filter_updated == frames[i].expected_filter_update);
         CHECK(absolute_state.filter.gated == relative_state.filter.gated);
-        CHECK(absolute_state.filter.median_prev_1 == relative_state.filter.median_prev_1);
         CHECK(absolute_state.filter.median_prev_2 == relative_state.filter.median_prev_2);
 
         if (i == 0)
@@ -222,7 +220,6 @@ static void test_absolute_relative_parity(void)
 
     iqs7211e_axis_filter_reset(&relative_state.filter, 900);
     CHECK(relative_state.filter.gated == 900);
-    CHECK(relative_state.filter.median_prev_1 == 900);
     CHECK(relative_state.filter.median_prev_2 == 900);
 }
 
@@ -281,7 +278,7 @@ static void test_median_of_three_in_every_order(void)
             iqs7211e_axis_filter_apply(&state, orders[i][2], 0);
         CHECK(result.gated == orders[i][2]);
         CHECK(result.filtered == 20);
-        CHECK(state.median_prev_1 == orders[i][2] && state.median_prev_2 == orders[i][1]);
+        CHECK(state.gated == orders[i][2] && state.median_prev_2 == orders[i][1]);
     }
 }
 

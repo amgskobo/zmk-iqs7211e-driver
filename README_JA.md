@@ -253,6 +253,12 @@ CONFIG_IQS7211E_WORKQUEUE_STACK_SIZE=1536
 CONFIG_IQS7211E_WORKQUEUE_PRIORITY=-1
 ```
 
+PMを有効にした場合、各deviceは順番に完了を待つ5つの同期取消に1つの共有領域を使い、
+releaseのflush用記述子は別に保持します。各取消の呼び出しが戻ってから次が同じ領域を使い、
+非同期work自体はすべて独立しています。PM無効時はどちらの記述子も確保しません。
+実kernelのPM fixtureは、実行中の各workの取消完了を待ってから領域を再利用することを検査します。
+同じdeviceへのPM actionの同時呼び出しは、対応する呼び出し契約には含みません。
+
 ### 3.4 ファームウェアのビルド
 
 変更を GitHub リポジトリにプッシュします。
@@ -349,6 +355,10 @@ Azoteq が提供する `src/iqs7211e_init.h` ファイルを編集すること�
 bindingの既定値、`struct iqs7211e_config`の型、`DT_INST_PROP_OR`のfallbackは一致させます。driver既定値は`jitter-deadband = 8`です。panel、電極、表面材などのハードウェア構成に合わせて実測し、必要な値をboard overlayで上書きします。
 
 deadband履歴や中央値履歴などの可変状態は`struct iqs7211e_data`に置き、読み取り専用のdevice configと混ぜません。
+
+各軸は最新のgated座標と、その1つ前の座標を保持します。最新のgated座標は中央値の最新履歴も兼ね、
+次の更新で新しいgated sampleと保持した2値を組み合わせます。最新履歴の重複保存をなくしても、
+3サンプル中央値の履歴幅は維持されます。
 
 `touch-verify-interval-ms`は、絶対・相対の両モードで動くセンサー生存確認です。座標フィルターやレイヤーには依存せず、物理releaseまたは読み取り失敗を検出すると古い接触をreleaseします。
 
