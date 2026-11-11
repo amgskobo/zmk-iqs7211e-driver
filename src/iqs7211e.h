@@ -130,16 +130,44 @@ struct iqs7211e_data
     const struct device *dev;
     struct gpio_callback gpio_cb;
     struct k_work work;
-    enum iqs7211e_init_state init_state;
-    bool reset_called;
+    /* Group aligned work storage without sharing any synchronization lifetime. */
+    struct k_work_delayable click_work;
+    struct k_work_delayable touch_verify_work;
+    struct k_work_delayable rdy_recheck_work;
+    struct k_work_delayable boot_kick_work;
+    struct k_work_sync click_work_sync;
+    struct k_work_sync touch_verify_work_sync;
+    struct k_work_sync rdy_recheck_work_sync;
+    struct k_work_sync boot_kick_work_sync;
+    struct k_work_sync work_sync;
+#ifdef CONFIG_PM_DEVICE
+    struct k_work pm_release_work;
+    struct k_work_sync pm_release_work_sync;
+    int pm_release_ret;
+#endif
     atomic_t suspended;
     /* PM resume can run before the GPIO controller is ready. Track whether
      * that controller actually accepted the RDY interrupt configuration. */
     atomic_t irq_enabled;
-    bool sensor_suspended;
-    uint8_t sensor_resume_attempts;
+    atomic_t boot_irq_seen;
+    atomic_t rdy_recheck_attempts;
+    uint16_t click_button;
+    uint16_t finger_1_x;
+    uint16_t finger_1_y;
+    uint16_t finger_1_touch_strength;
+    uint16_t finger_1_area;
+    uint16_t finger_1_prev_x;
+    uint16_t finger_1_prev_y;
+    int16_t finger_1_prev_dx;
+    int16_t finger_1_prev_dy;
+    struct iqs7211e_axis_filter finger_1_filter_x;
+    struct iqs7211e_axis_filter finger_1_filter_y;
     uint8_t gestures[2];
     uint8_t info_flags[2];
+    enum iqs7211e_init_state init_state;
+    bool reset_called;
+    bool sensor_suspended;
+    uint8_t sensor_resume_attempts;
     uint8_t touch_count;
     /*
      * Tap gestures are emitted as press/release pairs from a delayed work item
@@ -148,39 +176,10 @@ struct iqs7211e_data
      * six - and click_button is the INPUT_BTN_* code. INPUT_BTN_0 is 0x100, so
      * the button code needs 16 bits.
      */
-    struct k_work_delayable click_work;
-    struct k_work_sync click_work_sync;
     uint8_t click_edges;
-    uint16_t click_button;
-    uint16_t finger_1_x;
-    uint16_t finger_1_y;
-    uint16_t finger_1_touch_strength;
-    uint16_t finger_1_area;
-    uint16_t finger_2_x;
-    uint16_t finger_2_y;
-    uint16_t finger_1_prev_x;
-    uint16_t finger_1_prev_y;
-    int16_t finger_1_prev_dx;
-    int16_t finger_1_prev_dy;
-    struct iqs7211e_axis_filter finger_1_filter_x;
-    struct iqs7211e_axis_filter finger_1_filter_y;
     bool last_touched_state;
     bool touch_release_pending;
     bool touch_verify_pending;
-    atomic_t boot_irq_seen;
-    struct k_work_delayable touch_verify_work;
-    struct k_work_sync touch_verify_work_sync;
-    struct k_work_delayable rdy_recheck_work;
-    struct k_work_sync rdy_recheck_work_sync;
-    atomic_t rdy_recheck_attempts;
     /* Resets a sensor that stays silent after boot; see its handler. */
-    struct k_work_delayable boot_kick_work;
-    struct k_work_sync boot_kick_work_sync;
     uint8_t boot_kick_attempts;
-#ifdef CONFIG_PM_DEVICE
-    struct k_work pm_release_work;
-    struct k_work_sync pm_release_work_sync;
-    int pm_release_ret;
-#endif
-    struct k_work_sync work_sync;
 };
